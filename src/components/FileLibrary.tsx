@@ -122,6 +122,44 @@ function allowDrop(e: DragEvent) {
   e.dataTransfer.dropEffect = 'move'
 }
 
+/** 'u' = ungrouped; 'g' + id = named group (matches drop band keys) */
+type CollapseKey = `g${number}` | 'u'
+
+function collapseKeyForGroup(gid: number): CollapseKey {
+  return `g${gid}` as CollapseKey
+}
+
+function SectionChevronButton({
+  expanded,
+  onToggle,
+  label,
+}: {
+  expanded: boolean
+  onToggle: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      className={
+        'file-library__collapse' +
+        (expanded ? '' : ' file-library__collapse--collapsed')
+      }
+      title={expanded ? 'Collapse' : 'Expand'}
+      aria-expanded={expanded}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+    >
+      <span className="file-library__chevron" aria-hidden>
+        ▾
+      </span>
+    </button>
+  )
+}
+
 export function FileLibrary({
   activeFileId,
   onOpenVersion,
@@ -135,7 +173,25 @@ export function FileLibrary({
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [dropBand, setDropBand] = useState<string | null>(null)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set()
+  )
   const editInputRef = useRef<HTMLInputElement>(null)
+
+  const isSectionCollapsed = (key: CollapseKey) =>
+    collapsedSections.has(key)
+
+  const toggleSectionCollapse = (key: CollapseKey) => {
+    setCollapsedSections((prev) => {
+      const n = new Set(prev)
+      if (n.has(key)) {
+        n.delete(key)
+      } else {
+        n.add(key)
+      }
+      return n
+    })
+  }
 
   const reload = () => {
     onLibraryChange()
@@ -320,10 +376,21 @@ export function FileLibrary({
             onDrop={(e) => onGroupSectionDrop(e, 'ungrouped')}
           >
             <div className="file-library__group-head file-library__group-head--fixed">
+              <SectionChevronButton
+                expanded={!isSectionCollapsed('u')}
+                onToggle={() => {
+                  toggleSectionCollapse('u')
+                }}
+                label={
+                  isSectionCollapsed('u')
+                    ? 'Expand ungrouped files'
+                    : 'Collapse ungrouped files'
+                }
+              />
               <span className="file-library__grip file-library__grip--spacer" />
               <span className="file-library__group-title">Ungrouped</span>
             </div>
-            {ungroupedFiles.length > 0 ? (
+            {ungroupedFiles.length > 0 && !isSectionCollapsed('u') ? (
               <ul className="file-library__file-list">
                 {ungroupedFiles.map((f) => (
                   <FileRow
@@ -351,6 +418,8 @@ export function FileLibrary({
           {groups.map((g) => {
             const gid = g.id!
             const band = `g-${gid}`
+            const collapseKey = collapseKeyForGroup(gid)
+            const sectionCollapsed = isSectionCollapsed(collapseKey)
             const inGroup = byGroup(gid)
             return (
               <section
@@ -373,6 +442,17 @@ export function FileLibrary({
                 onDrop={(e) => onGroupSectionDrop(e, gid)}
               >
                 <div className="file-library__group-head">
+                  <SectionChevronButton
+                    expanded={!sectionCollapsed}
+                    onToggle={() => {
+                      toggleSectionCollapse(collapseKey)
+                    }}
+                    label={
+                      sectionCollapsed
+                        ? `Expand group ${g.name}`
+                        : `Collapse group ${g.name}`
+                    }
+                  />
                   <span
                     className="file-library__grip"
                     title="Drag to reorder"
@@ -429,7 +509,7 @@ export function FileLibrary({
                     ×
                   </button>
                 </div>
-                {inGroup.length > 0 ? (
+                {inGroup.length > 0 && !sectionCollapsed ? (
                   <ul className="file-library__file-list">
                     {inGroup.map((f) => (
                       <FileRow

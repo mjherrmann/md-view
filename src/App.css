@@ -204,6 +204,39 @@
   pointer-events: none;
 }
 
+.file-library__collapse {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.file-library__collapse:hover {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+  color: inherit;
+}
+
+.file-library__chevron {
+  display: block;
+  font-size: 0.65rem;
+  transition: transform 0.12s ease;
+  transform: rotate(0deg);
+  transform-origin: 50% 50%;
+}
+
+.file-library__collapse--collapsed .file-library__chevron {
+  transform: rotate(-90deg);
+}
+
 .file-library__group-title {
   flex: 1;
   min-width: 0;
