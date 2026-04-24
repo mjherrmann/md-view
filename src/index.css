@@ -1,0 +1,57 @@
+:root {
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f1419;
+  background: #f4f5f7;
+  --md-math-error: #c00;
+  --border: #d5dbe3;
+  --panel: #fff;
+  --text-muted: #4a5568;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e6edf3;
+    background: #0d1117;
+    --md-math-error: #f88;
+    --border: #30363d;
+    --panel: #161b22;
+    --text-muted: #8b949e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+#root {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100%;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+code {
+  font-family:
+    ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+}
