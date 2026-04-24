@@ -50,26 +50,35 @@ export default function App() {
     []
   )
 
-  const onFileDropped = useCallback(
-    async (file: File) => {
-      const text = await file.text()
+  const bumpLibrary = useCallback(() => {
+    setLibKey((k) => k + 1)
+  }, [])
+
+  const onFilesDropped = useCallback(
+    async (files: File[]) => {
       setPersistError(null)
-      try {
-        const { file: rec } = await getOrCreateFileByName(
-          file.name,
-          text,
-          'drop'
-        )
-        applyRawDocument(text, file.name, rec.id ?? null)
-        setLibKey((k) => k + 1)
-      } catch (e) {
-        applyRawDocument(text, file.name, null)
-        setPersistError(
-          e instanceof Error
-            ? e.message
-            : 'Could not save to browser storage (IndexedDB).'
-        )
+      let lastError: string | null = null
+      for (const file of files) {
+        const text = await file.text()
+        try {
+          const { file: rec } = await getOrCreateFileByName(
+            file.name,
+            text,
+            'drop'
+          )
+          applyRawDocument(text, file.name, rec.id ?? null)
+        } catch (e) {
+          applyRawDocument(text, file.name, null)
+          lastError =
+            e instanceof Error
+              ? e.message
+              : 'Could not save to browser storage (IndexedDB).'
+        }
       }
+      if (lastError) {
+        setPersistError(lastError)
+      }
+      setLibKey((k) => k + 1)
     },
     [applyRawDocument]
   )
@@ -88,7 +97,7 @@ export default function App() {
         {fileName ? (
           <p className="app__file">{fileName}</p>
         ) : (
-          <p className="app__hint">Drop a .md or .txt file to render</p>
+          <p className="app__hint">Drop one or more .md / .txt files to render</p>
         )}
         {persistError && (
           <p className="app__warn" role="status">
@@ -102,8 +111,9 @@ export default function App() {
           activeFileId={activeFileId}
           onOpenVersion={onOpenVersion}
           refreshKey={libKey}
+          onLibraryChange={bumpLibrary}
         />
-        <DropZone className="app__main" onFile={onFileDropped}>
+        <DropZone className="app__main" onFiles={onFilesDropped}>
           {frontMatter && (
             <details className="app__meta">
               <summary>Front matter (YAML)</summary>
@@ -116,7 +126,9 @@ export default function App() {
             {markdown ? (
               <MarkdownPane markdown={markdown} useDarkShiki={useDark} />
             ) : (
-              <div className="app__empty">Drop a document here to replace this area.</div>
+              <div className="app__empty">
+                Drop one or more documents here to replace this area.
+              </div>
             )}
           </div>
         </DropZone>
