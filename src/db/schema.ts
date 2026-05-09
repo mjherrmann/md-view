@@ -1,11 +1,17 @@
 import Dexie, { type Table } from 'dexie'
+import { displayNameFromEntryPath, parentDirFromEntryPath } from '../lib/entryPath'
+
+export type GroupPlacement = 'auto' | 'manual'
 
 export interface FileRecord {
   id?: number
+  /** Canonical key: relative path from folder selection, or basename for flat drops. */
+  entryPath: string
   name: string
   currentVersionId: number
   updatedAt: number
   groupId?: number | null
+  groupPlacement: GroupPlacement
 }
 
 export type VersionSource = 'drop' | 'restore' | 'library'
@@ -40,24 +46,68 @@ export class MdDatabase extends Dexie {
       versions: '++id, fileId, createdAt',
       groups: '++id, name, sortOrder',
     })
+    this.version(3)
+      .stores({
+        files:
+          '++id, entryPath, name, updatedAt, currentVersionId, groupId, groupPlacement',
+        versions: '++id, fileId, createdAt',
+        groups: '++id, name, sortOrder',
+      })
+      .upgrade(async (tx) => {
+        const t = tx.table('files')
+        await t.toCollection().modify((row: Record<string, unknown>) => {
+          if (row.entryPath == null || row.entryPath === '') {
+            row.entryPath = row.name
+          }
+          if (row.groupPlacement == null) {
+            row.groupPlacement = 'manual'
+          }
+        })
+      })
   }
 }
 
 export const db = new MdDatabase()
 
-export async function getOrCreateFileByName(
-  name: string,
+async function findOrCreateGroupIdByName(name: string): Promise<number> {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error('Group path is empty.')
+  }
+  const existing = await db.groups.where('name').equals(trimmed).first()
+  if (existing?.id != null) {
+    return existing.id
+  }
+  const all = await db.groups.toArray()
+  const maxOrder =
+    all.length > 0 ? Math.max(...all.map((g) => g.sortOrder), -1) : -1
+  return (await db.groups.add({
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+  })) as number
+}
+
+export async function getOrCreateFileByEntryPath(
+  entryPath: string,
+  displayName: string,
   content: string,
   source: VersionSource
-): Promise<{ file: FileRecord; version: VersionRecord }> {
-  return await db.transaction('rw', [db.files, db.versions], async () => {
-    let file = await db.files.where('name').equals(name).first()
+): Promise<{ file: FileRecord; version: VersionRecord; versionOrdinal: string }> {
+  return await db.transaction('rw', [db.files, db.versions, db.groups], async () => {
+    let file = await db.files.where('entryPath').equals(entryPath).first()
     if (!file) {
+      let groupId: number | null = null
+      const dir = parentDirFromEntryPath(entryPath)
+      if (dir) {
+        groupId = await findOrCreateGroupIdByName(dir)
+      }
       const fileId = await db.files.add({
-        name,
+        entryPath,
+        name: displayName || displayNameFromEntryPath(entryPath),
         currentVersionId: 0,
         updatedAt: Date.now(),
-        groupId: null,
+        groupId,
+        groupPlacement: 'auto',
       })
       file = (await db.files.get(fileId))!
     }
@@ -73,7 +123,13 @@ export async function getOrCreateFileByName(
       currentVersionId: versionId as number,
       updatedAt: Date.now(),
     })
-    return { file: (await db.files.get(file.id!))!, version }
+    const total = await db.versions.where('fileId').equals(file.id!).count()
+    const versionOrdinal = `v${total}`
+    return {
+      file: (await db.files.get(file.id!))!,
+      version,
+      versionOrdinal,
+    }
   })
 }
 
@@ -93,7 +149,10 @@ export async function setFileGroup(
   fileId: number,
   groupId: number | null
 ): Promise<void> {
-  await db.files.update(fileId, { groupId: groupId == null ? null : groupId })
+  await db.files.update(fileId, {
+    groupId: groupId == null ? null : groupId,
+    groupPlacement: 'manual',
+  })
 }
 
 export async function createGroup(name: string): Promise<number> {
@@ -164,4 +223,17 @@ export async function loadFileCurrent(
     return undefined
   }
   return all.sort((a, b) => a.createdAt - b.createdAt).at(-1)
+}
+
+/** Ordinal label v1 = oldest, vN = newest (chronological). */
+export function versionOrdinalLabel(
+  versionId: number,
+  orderedNewestFirst: VersionRecord[]
+): string | null {
+  const chronological = orderedNewestFirst.slice().reverse()
+  const idx = chronological.findIndex((v) => v.id === versionId)
+  if (idx < 0) {
+    return null
+  }
+  return `v${idx + 1}`
 }

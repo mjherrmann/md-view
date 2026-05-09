@@ -13,11 +13,18 @@ import {
   renameGroup,
   reorderGroups,
   setFileGroup,
+  versionOrdinalLabel,
 } from '../db/schema'
+import { VersionDiffModal } from './VersionDiffModal'
 
 type Props = {
   activeFileId: number | null
-  onOpenVersion: (file: FileRecord, version: VersionRecord) => void
+  activeVersionId: number | null
+  onOpenVersion: (
+    file: FileRecord,
+    version: VersionRecord,
+    versionOrdinal: string
+  ) => void
   refreshKey: number
   onLibraryChange: () => void
 }
@@ -48,22 +55,36 @@ function computeOrderAfterGroupDrop(
 type FileRowProps = {
   f: FileRecord
   active: boolean
+  activeVersionId: number | null
   onOpen: () => void | Promise<void>
   onToggleHistory: () => void
   expanded: boolean
   versions: VersionRecord[]
-  onOpenV: (v: VersionRecord) => void
+  compareAId: number | null
+  compareBId: number | null
+  onCompareAChange: (id: number | null) => void
+  onCompareBChange: (id: number | null) => void
+  onShowDiff: () => void
+  onOpenV: (v: VersionRecord, ordinal: string) => void
 }
 
 function FileRow({
   f,
   active,
+  activeVersionId,
   onOpen,
   onToggleHistory,
   expanded,
   versions,
+  compareAId,
+  compareBId,
+  onCompareAChange,
+  onCompareBChange,
+  onShowDiff,
   onOpenV,
 }: FileRowProps) {
+  const showPath = f.entryPath !== f.name
+
   return (
     <li className="file-library__item">
       <div
@@ -85,6 +106,11 @@ function FileRow({
           }}
         >
           <span className="file-library__name">{f.name}</span>
+          {showPath ? (
+            <span className="file-library__path" title={f.entryPath}>
+              {f.entryPath}
+            </span>
+          ) : null}
           <span className="file-library__date">
             {new Date(f.updatedAt).toLocaleString()}
           </span>
@@ -99,19 +125,89 @@ function FileRow({
         </button>
       </div>
       {expanded && versions.length > 0 && (
-        <ul className="file-library__versions">
-          {versions.map((v) => (
-            <li key={v.id}>
+        <div className="file-library__history-panel">
+          <ul className="file-library__versions">
+            {versions.map((v) => {
+              const ord =
+                versionOrdinalLabel(v.id!, versions) ??
+                `v${versions.length}`
+              return (
+                <li key={v.id}>
+                  <button
+                    type="button"
+                    className={
+                      'file-library__version' +
+                      (activeVersionId != null && v.id === activeVersionId
+                        ? ' file-library__version--active'
+                        : '')
+                    }
+                    onClick={() => onOpenV(v, ord)}
+                  >
+                    <span className="file-library__version-ord">{ord}</span>
+                    {' · '}
+                    {new Date(v.createdAt).toLocaleString()} · {v.source}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          {versions.length >= 2 && (
+            <div className="file-library__compare">
+              <span className="file-library__compare-label">Compare</span>
+              <select
+                className="file-library__compare-select"
+                aria-label="Older version"
+                value={compareAId ?? ''}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  onCompareAChange(Number.isFinite(n) ? n : null)
+                }}
+              >
+                {versions.map((v) => {
+                  const ord =
+                    versionOrdinalLabel(v.id!, versions) ?? String(v.id)
+                  return (
+                    <option key={`a-${v.id}`} value={v.id}>
+                      {ord}
+                    </option>
+                  )
+                })}
+              </select>
+              <span className="file-library__compare-vs">to</span>
+              <select
+                className="file-library__compare-select"
+                aria-label="Newer version"
+                value={compareBId ?? ''}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  onCompareBChange(Number.isFinite(n) ? n : null)
+                }}
+              >
+                {versions.map((v) => {
+                  const ord =
+                    versionOrdinalLabel(v.id!, versions) ?? String(v.id)
+                  return (
+                    <option key={`b-${v.id}`} value={v.id}>
+                      {ord}
+                    </option>
+                  )
+                })}
+              </select>
               <button
                 type="button"
-                className="file-library__version"
-                onClick={() => onOpenV(v)}
+                className="file-library__compare-btn"
+                disabled={
+                  compareAId == null ||
+                  compareBId == null ||
+                  compareAId === compareBId
+                }
+                onClick={onShowDiff}
               >
-                {new Date(v.createdAt).toLocaleString()} · {v.source}
+                Show diff
               </button>
-            </li>
-          ))}
-        </ul>
+            </div>
+          )}
+        </div>
       )}
     </li>
   )
@@ -162,6 +258,7 @@ function SectionChevronButton({
 
 export function FileLibrary({
   activeFileId,
+  activeVersionId,
   onOpenVersion,
   refreshKey,
   onLibraryChange,
@@ -170,6 +267,15 @@ export function FileLibrary({
   const [groups, setGroups] = useState<GroupRecord[]>([])
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [versions, setVersions] = useState<VersionRecord[]>([])
+  const [compareAId, setCompareAId] = useState<number | null>(null)
+  const [compareBId, setCompareBId] = useState<number | null>(null)
+  const [diffModal, setDiffModal] = useState<{
+    fileName: string
+    leftOrdinal: string
+    rightOrdinal: string
+    leftContent: string
+    rightContent: string
+  } | null>(null)
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [dropBand, setDropBand] = useState<string | null>(null)
@@ -332,13 +438,84 @@ export function FileLibrary({
     if (expandedId === id) {
       setExpandedId(null)
       setVersions([])
+      setCompareAId(null)
+      setCompareBId(null)
       return
     }
     setExpandedId(id)
-    setVersions(await listVersionsForFile(id))
+    const list = await listVersionsForFile(id)
+    setVersions(list)
+    if (list.length >= 2) {
+      const newest = list[0]!
+      const oldest = list[list.length - 1]!
+      setCompareAId(oldest.id!)
+      setCompareBId(newest.id!)
+    } else {
+      setCompareAId(null)
+      setCompareBId(null)
+    }
+  }
+
+  const openFileCurrent = async (f: FileRecord) => {
+    const v = await loadFileCurrent(f)
+    if (!v) {
+      return
+    }
+    const all = await listVersionsForFile(f.id!)
+    const ord = versionOrdinalLabel(v.id!, all) ?? 'v1'
+    onOpenVersion(f, v, ord)
   }
 
   const showSections = files.length > 0 || groups.length > 0
+
+  const renderFileRow = (f: FileRecord) => (
+    <FileRow
+      key={f.id}
+      f={f}
+      active={f.id === activeFileId}
+      activeVersionId={activeVersionId}
+      onOpen={() => openFileCurrent(f)}
+      onToggleHistory={() => {
+        void toggleExpand(f.id!)
+      }}
+      expanded={expandedId === f.id}
+      versions={expandedId === f.id ? versions : []}
+      compareAId={expandedId === f.id ? compareAId : null}
+      compareBId={expandedId === f.id ? compareBId : null}
+      onCompareAChange={(id) => {
+        setCompareAId(id)
+      }}
+      onCompareBChange={(id) => {
+        setCompareBId(id)
+      }}
+      onShowDiff={() => {
+        if (expandedId !== f.id || compareAId == null || compareBId == null) {
+          return
+        }
+        const va = versions.find((x) => x.id === compareAId)
+        const vb = versions.find((x) => x.id === compareBId)
+        if (!va || !vb) {
+          return
+        }
+        const leftOrd =
+          versionOrdinalLabel(va.id!, versions) ?? String(va.id)
+        const rightOrd =
+          versionOrdinalLabel(vb.id!, versions) ?? String(vb.id)
+        const chronological = versions.slice().reverse()
+        const ta = chronological.findIndex((x) => x.id === va.id)
+        const tb = chronological.findIndex((x) => x.id === vb.id)
+        const leftIsOlder = ta <= tb
+        setDiffModal({
+          fileName: f.name,
+          leftOrdinal: leftIsOlder ? leftOrd : rightOrd,
+          rightOrdinal: leftIsOlder ? rightOrd : leftOrd,
+          leftContent: leftIsOlder ? va.content : vb.content,
+          rightContent: leftIsOlder ? vb.content : va.content,
+        })
+      }}
+      onOpenV={(v, ord) => onOpenVersion(f, v, ord)}
+    />
+  )
 
   return (
     <aside className="file-library">
@@ -392,25 +569,7 @@ export function FileLibrary({
             </div>
             {ungroupedFiles.length > 0 && !isSectionCollapsed('u') ? (
               <ul className="file-library__file-list">
-                {ungroupedFiles.map((f) => (
-                  <FileRow
-                    key={f.id}
-                    f={f}
-                    active={f.id === activeFileId}
-                    onOpen={async () => {
-                      const v = await loadFileCurrent(f)
-                      if (v) {
-                        onOpenVersion(f, v)
-                      }
-                    }}
-                    onToggleHistory={() => {
-                      void toggleExpand(f.id!)
-                    }}
-                    expanded={expandedId === f.id}
-                    versions={expandedId === f.id ? versions : []}
-                    onOpenV={(v) => onOpenVersion(f, v)}
-                  />
-                ))}
+                {ungroupedFiles.map(renderFileRow)}
               </ul>
             ) : null}
           </section>
@@ -511,25 +670,7 @@ export function FileLibrary({
                 </div>
                 {inGroup.length > 0 && !sectionCollapsed ? (
                   <ul className="file-library__file-list">
-                    {inGroup.map((f) => (
-                      <FileRow
-                        key={f.id}
-                        f={f}
-                        active={f.id === activeFileId}
-                        onOpen={async () => {
-                          const v = await loadFileCurrent(f)
-                          if (v) {
-                            onOpenVersion(f, v)
-                          }
-                        }}
-                        onToggleHistory={() => {
-                          void toggleExpand(f.id!)
-                        }}
-                        expanded={expandedId === f.id}
-                        versions={expandedId === f.id ? versions : []}
-                        onOpenV={(v) => onOpenVersion(f, v)}
-                      />
-                    ))}
+                    {inGroup.map(renderFileRow)}
                   </ul>
                 ) : null}
               </section>
@@ -537,6 +678,16 @@ export function FileLibrary({
           })}
         </div>
       )}
+
+      <VersionDiffModal
+        open={diffModal != null}
+        onClose={() => setDiffModal(null)}
+        fileName={diffModal?.fileName ?? ''}
+        leftOrdinal={diffModal?.leftOrdinal ?? ''}
+        rightOrdinal={diffModal?.rightOrdinal ?? ''}
+        leftContent={diffModal?.leftContent ?? ''}
+        rightContent={diffModal?.rightContent ?? ''}
+      />
     </aside>
   )
 }
