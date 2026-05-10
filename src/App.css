@@ -269,6 +269,25 @@
   color: inherit;
 }
 
+.file-library__group-rename-btn {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  line-height: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.file-library__group-rename-btn:hover {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+  color: inherit;
+}
+
 .file-library__group-del {
   flex-shrink: 0;
   width: 1.5rem;
@@ -377,6 +396,72 @@
   background: color-mix(in srgb, var(--border) 35%, transparent);
 }
 
+.file-library__delete-hold {
+  position: relative;
+  flex-shrink: 0;
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.file-library__delete-hold:hover {
+  color: inherit;
+}
+
+.file-library__delete-hold:active {
+  color: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  .file-library__delete-hold:active {
+    color: #f87171;
+  }
+}
+
+.file-library__delete-hold__fill {
+  position: absolute;
+  inset: 1px;
+  border-radius: 5px;
+  pointer-events: none;
+  opacity: 0.42;
+  background: conic-gradient(
+    from -90deg,
+    color-mix(in srgb, #c53030 75%, var(--border))
+      calc(var(--hold-p, 0) * 1turn),
+    transparent 0
+  );
+}
+
+.file-library__delete-hold__icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.file-library__delete-hold--compact {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.file-library__delete-hold--compact .file-library__delete-hold__icon svg {
+  width: 11px;
+  height: 11px;
+}
+
 .file-library__history-panel {
   padding-bottom: 0.35rem;
 }
@@ -385,6 +470,25 @@
   list-style: none;
   margin: 0;
   padding: 0.15rem 0.25rem 0.35rem 0.5rem;
+}
+
+.file-library__version-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.2rem;
+  margin-bottom: 0.2rem;
+  cursor: grab;
+}
+
+.file-library__version-row:active {
+  cursor: grabbing;
+}
+
+.file-library__version-row .file-library__version {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin-bottom: 0;
 }
 
 .file-library__version {
@@ -548,9 +652,11 @@
   }
 }
 
-.version-diff-modal__pre {
+.version-diff-modal__lines {
   margin: 0;
-  padding: 0.5rem 0.65rem;
+  padding: 0.35rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-size: 0.72rem;
   line-height: 1.45;
   overflow: auto;
@@ -558,7 +664,41 @@
   background: color-mix(in srgb, var(--border) 12%, transparent);
   border: 1px solid var(--border);
   border-radius: 6px;
-  white-space: pre;
+}
+
+.version-diff-modal__line {
+  padding: 0.06rem 0.55rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.version-diff-modal__line--meta {
+  background: color-mix(in srgb, var(--border) 22%, transparent);
+  color: var(--text-muted);
+}
+
+.version-diff-modal__line--hunk {
+  background: color-mix(in srgb, var(--border) 14%, transparent);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.version-diff-modal__line--del {
+  background: color-mix(in srgb, #dc2626 16%, transparent);
+}
+
+.version-diff-modal__line--add {
+  background: color-mix(in srgb, #16a34a 16%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .version-diff-modal__line--del {
+    background: color-mix(in srgb, #f87171 14%, transparent);
+  }
+
+  .version-diff-modal__line--add {
+    background: color-mix(in srgb, #4ade80 14%, transparent);
+  }
 }
 
 /* —— Markdown body —— */

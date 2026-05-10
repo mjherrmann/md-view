@@ -1,12 +1,9 @@
 import Dexie, { type Table } from 'dexie'
-import { displayNameFromEntryPath, parentDirFromEntryPath } from '../lib/entryPath'
 
 export type GroupPlacement = 'auto' | 'manual'
 
 export interface FileRecord {
   id?: number
-  /** Canonical key: relative path from folder selection, or basename for flat drops. */
-  entryPath: string
   name: string
   currentVersionId: number
   updatedAt: number
@@ -14,7 +11,7 @@ export interface FileRecord {
   groupPlacement: GroupPlacement
 }
 
-export type VersionSource = 'drop' | 'restore' | 'library'
+export type VersionSource = 'drop' | 'restore' | 'library' | 'split'
 
 export interface VersionRecord {
   id?: number
@@ -29,6 +26,9 @@ export interface GroupRecord {
   name: string
   sortOrder: number
 }
+
+/** New OS drops land in this group (created on first use). */
+export const DEFAULT_DROP_GROUP_NAME = 'Dropped'
 
 export class MdDatabase extends Dexie {
   files!: Table<FileRecord, number>
@@ -64,6 +64,19 @@ export class MdDatabase extends Dexie {
           }
         })
       })
+    this.version(4)
+      .stores({
+        files:
+          '++id, name, updatedAt, currentVersionId, groupId, groupPlacement',
+        versions: '++id, fileId, createdAt',
+        groups: '++id, name, sortOrder',
+      })
+      .upgrade(async (tx) => {
+        const t = tx.table('files')
+        await t.toCollection().modify((row: Record<string, unknown>) => {
+          delete row.entryPath
+        })
+      })
   }
 }
 
@@ -72,7 +85,7 @@ export const db = new MdDatabase()
 async function findOrCreateGroupIdByName(name: string): Promise<number> {
   const trimmed = name.trim()
   if (!trimmed) {
-    throw new Error('Group path is empty.')
+    throw new Error('Group name is empty.')
   }
   const existing = await db.groups.where('name').equals(trimmed).first()
   if (existing?.id != null) {
@@ -87,49 +100,145 @@ async function findOrCreateGroupIdByName(name: string): Promise<number> {
   })) as number
 }
 
-export async function getOrCreateFileByEntryPath(
-  entryPath: string,
+/**
+ * Each browser drop creates a **new** file with a single version in {@link DEFAULT_DROP_GROUP_NAME}.
+ * Versions are **not** appended on repeated drops (use library merge instead).
+ */
+export async function createNewFileFromBrowserDrop(
   displayName: string,
-  content: string,
-  source: VersionSource
+  content: string
 ): Promise<{ file: FileRecord; version: VersionRecord; versionOrdinal: string }> {
   return await db.transaction('rw', [db.files, db.versions, db.groups], async () => {
-    let file = await db.files.where('entryPath').equals(entryPath).first()
-    if (!file) {
-      let groupId: number | null = null
-      const dir = parentDirFromEntryPath(entryPath)
-      if (dir) {
-        groupId = await findOrCreateGroupIdByName(dir)
-      }
-      const fileId = await db.files.add({
-        entryPath,
-        name: displayName || displayNameFromEntryPath(entryPath),
-        currentVersionId: 0,
-        updatedAt: Date.now(),
-        groupId,
-        groupPlacement: 'auto',
-      })
-      file = (await db.files.get(fileId))!
-    }
+    const groupId = await findOrCreateGroupIdByName(DEFAULT_DROP_GROUP_NAME)
+    const fileId = await db.files.add({
+      name: displayName,
+      currentVersionId: 0,
+      updatedAt: Date.now(),
+      groupId,
+      groupPlacement: 'auto',
+    })
+    let file = (await db.files.get(fileId))!
 
     const versionId = await db.versions.add({
       fileId: file.id!,
       content,
       createdAt: Date.now(),
-      source,
+      source: 'drop',
     })
     const version = (await db.versions.get(versionId))!
     await db.files.update(file.id!, {
       currentVersionId: versionId as number,
       updatedAt: Date.now(),
     })
-    const total = await db.versions.where('fileId').equals(file.id!).count()
-    const versionOrdinal = `v${total}`
+    file = (await db.files.get(file.id!))!
     return {
-      file: (await db.files.get(file.id!))!,
+      file,
       version,
-      versionOrdinal,
+      versionOrdinal: 'v1',
     }
+  })
+}
+
+/**
+ * Move a library file into a group (or ungrouped). If another file with the **same name**
+ * already exists there, merges all versions into that file and removes the dragged file.
+ */
+export async function moveFileToGroup(
+  movingFileId: number,
+  targetGroupId: number | null
+): Promise<{ merged: boolean; survivingFileId: number }> {
+  return await db.transaction('rw', [db.files, db.versions], async () => {
+    const moving = await db.files.get(movingFileId)
+    if (!moving) {
+      throw new Error('File not found.')
+    }
+
+    const others = await db.files
+      .filter(
+        (f) =>
+          f.id !== movingFileId &&
+          f.name === moving.name &&
+          (targetGroupId == null ? f.groupId == null : f.groupId === targetGroupId)
+      )
+      .toArray()
+
+    const target = others.sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0]
+    if (!target?.id) {
+      await db.files.update(movingFileId, {
+        groupId: targetGroupId,
+        groupPlacement: 'manual',
+        updatedAt: Date.now(),
+      })
+      return { merged: false, survivingFileId: movingFileId }
+    }
+
+    const sourceVersions = await db.versions
+      .where('fileId')
+      .equals(movingFileId)
+      .toArray()
+    for (const ver of sourceVersions) {
+      await db.versions.update(ver.id!, { fileId: target.id })
+    }
+
+    await db.files.delete(movingFileId)
+
+    const allTargetVers = await db.versions.where('fileId').equals(target.id).toArray()
+    const newest = allTargetVers.sort((a, b) => a.createdAt - b.createdAt).at(-1)!
+    await db.files.update(target.id, {
+      currentVersionId: newest.id!,
+      updatedAt: Date.now(),
+      groupPlacement: 'manual',
+    })
+
+    return { merged: true, survivingFileId: target.id }
+  })
+}
+
+/**
+ * Move one version out into its own file row at the target group (or ungrouped).
+ */
+export async function detachVersionToNewFile(
+  sourceFileId: number,
+  versionId: number,
+  targetGroupId: number | null
+): Promise<{ newFileId: number }> {
+  return await db.transaction('rw', [db.files, db.versions], async () => {
+    const src = await db.files.get(sourceFileId)
+    const ver = await db.versions.get(versionId)
+    if (!src || !ver || ver.fileId !== sourceFileId) {
+      throw new Error('Version not found.')
+    }
+
+    const newFileId = (await db.files.add({
+      name: src.name,
+      currentVersionId: 0,
+      updatedAt: Date.now(),
+      groupId: targetGroupId,
+      groupPlacement: 'manual',
+    })) as number
+
+    await db.versions.update(versionId, {
+      fileId: newFileId,
+      source: 'split',
+    })
+
+    await db.files.update(newFileId, {
+      currentVersionId: versionId,
+    })
+
+    const remaining = await db.versions.where('fileId').equals(sourceFileId).toArray()
+    if (remaining.length === 0) {
+      await db.files.delete(sourceFileId)
+    } else {
+      const newest = remaining.sort((a, b) => a.createdAt - b.createdAt).at(-1)!
+      const patch: Partial<FileRecord> = { updatedAt: Date.now() }
+      if (src.currentVersionId === versionId) {
+        patch.currentVersionId = newest.id!
+      }
+      await db.files.update(sourceFileId, patch)
+    }
+
+    return { newFileId }
   })
 }
 
@@ -152,6 +261,53 @@ export async function setFileGroup(
   await db.files.update(fileId, {
     groupId: groupId == null ? null : groupId,
     groupPlacement: 'manual',
+  })
+}
+
+export async function deleteFileAndVersions(fileId: number): Promise<void> {
+  await db.transaction('rw', [db.files, db.versions], async () => {
+    await db.versions.where('fileId').equals(fileId).delete()
+    await db.files.delete(fileId)
+  })
+}
+
+export async function getFileById(id: number): Promise<FileRecord | undefined> {
+  return db.files.get(id)
+}
+
+export async function deleteVersionForFile(
+  fileId: number,
+  versionId: number
+): Promise<{ fileRemoved: boolean }> {
+  return await db.transaction('rw', [db.files, db.versions], async () => {
+    const file = await db.files.get(fileId)
+    if (!file) {
+      throw new Error('File not found.')
+    }
+    const version = await db.versions.get(versionId)
+    if (!version || version.fileId !== fileId) {
+      throw new Error('Version not found.')
+    }
+
+    const all = await db.versions.where('fileId').equals(fileId).toArray()
+    if (all.length <= 1) {
+      await db.versions.where('fileId').equals(fileId).delete()
+      await db.files.delete(fileId)
+      return { fileRemoved: true }
+    }
+
+    await db.versions.delete(versionId)
+
+    const remaining = await db.versions.where('fileId').equals(fileId).toArray()
+    const newest = remaining.sort((a, b) => a.createdAt - b.createdAt).at(-1)!
+
+    const patch: Partial<FileRecord> = { updatedAt: Date.now() }
+    if (file.currentVersionId === versionId) {
+      patch.currentVersionId = newest.id!
+    }
+    await db.files.update(fileId, patch)
+
+    return { fileRemoved: false }
   })
 }
 
@@ -225,7 +381,6 @@ export async function loadFileCurrent(
   return all.sort((a, b) => a.createdAt - b.createdAt).at(-1)
 }
 
-/** Ordinal label v1 = oldest, vN = newest (chronological). */
 export function versionOrdinalLabel(
   versionId: number,
   orderedNewestFirst: VersionRecord[]

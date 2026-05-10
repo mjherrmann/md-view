@@ -13,6 +13,46 @@ export type VersionDiffModalProps = {
 
 const MAX_COMBINED = 400_000
 
+type DiffLineKind = 'meta' | 'hunk' | 'del' | 'add' | 'ctx'
+
+function diffLineKind(line: string): DiffLineKind {
+  if (line.startsWith('---')) {
+    return 'meta'
+  }
+  if (line.startsWith('+++')) {
+    return 'meta'
+  }
+  if (line.startsWith('@@')) {
+    return 'hunk'
+  }
+  if (line.startsWith('-')) {
+    return 'del'
+  }
+  if (line.startsWith('+')) {
+    return 'add'
+  }
+  return 'ctx'
+}
+
+function HighlightedDiffPatch({ patch }: { patch: string }) {
+  const lines = patch.split(/\r?\n/)
+  return (
+    <div className="version-diff-modal__lines">
+      {lines.map((line, i) => {
+        const kind = diffLineKind(line)
+        return (
+          <div
+            key={i}
+            className={`version-diff-modal__line version-diff-modal__line--${kind}`}
+          >
+            {line.length ? line : '\u00A0'}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function VersionDiffModal({
   open,
   onClose,
@@ -100,7 +140,7 @@ export function VersionDiffModal({
                   {MAX_COMBINED.toLocaleString()} characters max).
                 </p>
               )}
-              <pre className="version-diff-modal__pre">{patch}</pre>
+              <HighlightedDiffPatch patch={patch} />
             </>
           )}
         </div>

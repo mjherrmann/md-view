@@ -7,9 +7,13 @@ import { MarkdownPane } from './components/MarkdownPane'
 import {
   type FileRecord,
   type VersionRecord,
-  getOrCreateFileByEntryPath,
+  createNewFileFromBrowserDrop,
+  getFileById,
+  getVersion,
+  listVersionsForFile,
+  loadFileCurrent,
+  versionOrdinalLabel,
 } from './db/schema'
-import { displayNameFromEntryPath, entryPathFromFile } from './lib/entryPath'
 
 function parseMarkdownFile(raw: string) {
   try {
@@ -73,11 +77,10 @@ export default function App() {
       let lastError: string | null = null
       for (const file of files) {
         const text = await file.text()
-        const entryPath = entryPathFromFile(file)
-        const displayName = displayNameFromEntryPath(entryPath)
+        const displayName = file.name
         try {
           const { file: rec, version, versionOrdinal } =
-            await getOrCreateFileByEntryPath(entryPath, displayName, text, 'drop')
+            await createNewFileFromBrowserDrop(displayName, text)
           applyRawDocument(
             text,
             displayName,
@@ -114,6 +117,99 @@ export default function App() {
     [applyRawDocument]
   )
 
+  const onFileDeletedFromLibrary = useCallback((deletedFileId: number) => {
+    if (activeFileId === deletedFileId) {
+      setMarkdown('')
+      setFileName(null)
+      setActiveFileId(null)
+      setActiveVersionId(null)
+      setActiveVersionOrdinal(null)
+      setFrontMatter(null)
+    }
+  }, [activeFileId])
+
+  const onVersionDeletedFromLibrary = useCallback(
+    async (fileId: number, deletedVersionId: number) => {
+      if (activeFileId !== fileId || activeVersionId !== deletedVersionId) {
+        return
+      }
+      const file = await getFileById(fileId)
+      if (!file) {
+        return
+      }
+      const current = await loadFileCurrent(file)
+      if (!current) {
+        return
+      }
+      const all = await listVersionsForFile(fileId)
+      const ord = versionOrdinalLabel(current.id!, all) ?? 'v1'
+      applyRawDocument(
+        current.content,
+        file.name,
+        fileId,
+        current.id ?? null,
+        ord
+      )
+    },
+    [activeFileId, activeVersionId, applyRawDocument]
+  )
+
+  const onFileMergedFromLibrary = useCallback(
+    async (fromFileId: number, toFileId: number) => {
+      if (activeFileId !== fromFileId) {
+        return
+      }
+      const file = await getFileById(toFileId)
+      if (!file) {
+        return
+      }
+      const ver =
+        activeVersionId != null
+          ? await getVersion(toFileId, activeVersionId)
+          : undefined
+      const openVer = ver ?? (await loadFileCurrent(file))
+      if (!openVer) {
+        return
+      }
+      const all = await listVersionsForFile(toFileId)
+      const ord = versionOrdinalLabel(openVer.id!, all) ?? 'v1'
+      applyRawDocument(
+        openVer.content,
+        file.name,
+        toFileId,
+        openVer.id ?? null,
+        ord
+      )
+    },
+    [activeFileId, activeVersionId, applyRawDocument]
+  )
+
+  const onVersionDetachedFromLibrary = useCallback(
+    async (_sourceFileId: number, versionId: number, newFileId: number) => {
+      if (activeVersionId !== versionId) {
+        return
+      }
+      const file = await getFileById(newFileId)
+      if (!file) {
+        return
+      }
+      const ver = await getVersion(newFileId, versionId)
+      if (!ver) {
+        return
+      }
+      const all = await listVersionsForFile(newFileId)
+      const ord = versionOrdinalLabel(ver.id!, all) ?? 'v1'
+      applyRawDocument(
+        ver.content,
+        file.name,
+        newFileId,
+        ver.id ?? null,
+        ord
+      )
+    },
+    [activeVersionId, applyRawDocument]
+  )
+
   const fileLine =
     fileName &&
     (activeVersionOrdinal
@@ -130,8 +226,9 @@ export default function App() {
           <>
             <p className="app__hint">Drop one or more .md / .txt files to render</p>
             <p className="app__hint app__hint--sub">
-              Choose a folder (or drop a folder) so files with the same name in
-              different paths stay separate; single-file drops only see the file name.
+              Drops become new entries in the “Dropped” group. Drag a file onto another
+              group: if the same filename exists there, versions merge. Drag a version row
+              to Ungrouped or a group to split it into its own file.
             </p>
           </>
         )}
@@ -149,6 +246,10 @@ export default function App() {
           onOpenVersion={onOpenVersion}
           refreshKey={libKey}
           onLibraryChange={bumpLibrary}
+          onFileDeleted={onFileDeletedFromLibrary}
+          onVersionDeleted={onVersionDeletedFromLibrary}
+          onFileMerged={onFileMergedFromLibrary}
+          onVersionDetached={onVersionDetachedFromLibrary}
         />
         <DropZone className="app__main" onFiles={onFilesDropped}>
           {frontMatter && (

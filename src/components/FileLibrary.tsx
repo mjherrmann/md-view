@@ -1,18 +1,34 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { DND_FILE_MIME, DND_GROUP_MIME } from '../dnd'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import {
+  DND_FILE_MIME,
+  DND_GROUP_MIME,
+  DND_VERSION_MIME,
+} from '../dnd'
 import {
   type FileRecord,
   type GroupRecord,
   type VersionRecord,
   createGroup,
+  deleteFileAndVersions,
   deleteGroup,
+  deleteVersionForFile,
+  detachVersionToNewFile,
+  getFileById,
   listFilesForLibrary,
   listGroups,
   listVersionsForFile,
   loadFileCurrent,
+  moveFileToGroup,
   renameGroup,
   reorderGroups,
-  setFileGroup,
   versionOrdinalLabel,
 } from '../db/schema'
 import { VersionDiffModal } from './VersionDiffModal'
@@ -27,6 +43,132 @@ type Props = {
   ) => void
   refreshKey: number
   onLibraryChange: () => void
+  onFileDeleted?: (fileId: number) => void
+  /** Called when a version was removed but the file still exists (e.g. refresh active doc). */
+  onVersionDeleted?: (fileId: number, versionId: number) => void
+  /** Source file id removed after merging into target (same name in destination group). */
+  onFileMerged?: (fromFileId: number, toFileId: number) => void
+  /** A version was split out into its own file row. */
+  onVersionDetached?: (
+    sourceFileId: number,
+    versionId: number,
+    newFileId: number
+  ) => void
+}
+
+const HOLD_DELETE_MS = 700
+
+function FileDeleteHold({
+  label,
+  onHoldComplete,
+  compact,
+  title: holdTitle,
+}: {
+  label: string
+  onHoldComplete: () => void | Promise<void>
+  compact?: boolean
+  title?: string
+}) {
+  const [progress, setProgress] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const startRef = useRef(0)
+  const doneRef = useRef(false)
+  const holdingRef = useRef(false)
+
+  const stopTracking = useCallback(() => {
+    holdingRef.current = false
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    setProgress(0)
+  }, [])
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (e.button !== 0) {
+      return
+    }
+    doneRef.current = false
+    holdingRef.current = true
+    startRef.current = performance.now()
+    const step = () => {
+      if (!holdingRef.current) {
+        return
+      }
+      const elapsed = performance.now() - startRef.current
+      const p = Math.min(1, elapsed / HOLD_DELETE_MS)
+      setProgress(p)
+      if (p < 1 && holdingRef.current) {
+        rafRef.current = requestAnimationFrame(step)
+      }
+    }
+    rafRef.current = requestAnimationFrame(step)
+    timerRef.current = setTimeout(() => {
+      if (doneRef.current) {
+        return
+      }
+      doneRef.current = true
+      stopTracking()
+      void Promise.resolve(onHoldComplete()).catch(() => {
+        /* ignore */
+      })
+    }, HOLD_DELETE_MS)
+  }
+
+  const endHold = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (!doneRef.current) {
+      stopTracking()
+    }
+  }
+
+  useEffect(() => () => stopTracking(), [stopTracking])
+
+  return (
+    <button
+      type="button"
+      className={
+        'file-library__delete-hold' +
+        (compact ? ' file-library__delete-hold--compact' : '')
+      }
+      title={holdTitle ?? 'Hold to remove from library'}
+      aria-label={
+        compact ? `Hold to delete version ${label}` : `Hold to delete ${label}`
+      }
+      draggable={false}
+      onMouseDown={(e) => {
+        e.stopPropagation()
+      }}
+      onDragStart={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onPointerDown={onPointerDown}
+      onPointerUp={endHold}
+      onPointerCancel={endHold}
+      onPointerLeave={endHold}
+    >
+      <span
+        className="file-library__delete-hold__fill"
+        style={
+          {
+            '--hold-p': String(progress),
+          } as CSSProperties
+        }
+      />
+      <span className="file-library__delete-hold__icon" aria-hidden>
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4v2H5V4h3.5l1-1h5l1 1H19z" />
+        </svg>
+      </span>
+    </button>
+  )
 }
 
 function isUngrouped(f: FileRecord) {
@@ -66,6 +208,8 @@ type FileRowProps = {
   onCompareBChange: (id: number | null) => void
   onShowDiff: () => void
   onOpenV: (v: VersionRecord, ordinal: string) => void
+  onDeleteFile: () => void | Promise<void>
+  onDeleteVersion: (v: VersionRecord) => void | Promise<void>
 }
 
 function FileRow({
@@ -82,9 +226,9 @@ function FileRow({
   onCompareBChange,
   onShowDiff,
   onOpenV,
+  onDeleteFile,
+  onDeleteVersion,
 }: FileRowProps) {
-  const showPath = f.entryPath !== f.name
-
   return (
     <li className="file-library__item">
       <div
@@ -106,11 +250,6 @@ function FileRow({
           }}
         >
           <span className="file-library__name">{f.name}</span>
-          {showPath ? (
-            <span className="file-library__path" title={f.entryPath}>
-              {f.entryPath}
-            </span>
-          ) : null}
           <span className="file-library__date">
             {new Date(f.updatedAt).toLocaleString()}
           </span>
@@ -123,6 +262,7 @@ function FileRow({
         >
           ▾
         </button>
+        <FileDeleteHold label={f.name} onHoldComplete={onDeleteFile} />
       </div>
       {expanded && versions.length > 0 && (
         <div className="file-library__history-panel">
@@ -132,7 +272,20 @@ function FileRow({
                 versionOrdinalLabel(v.id!, versions) ??
                 `v${versions.length}`
               return (
-                <li key={v.id}>
+                <li
+                  key={v.id}
+                  className="file-library__version-row"
+                  title="Drag to Ungrouped or a group to split this version into its own file"
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation()
+                    e.dataTransfer.setData(
+                      DND_VERSION_MIME,
+                      `${f.id}:${v.id}`
+                    )
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                >
                   <button
                     type="button"
                     className={
@@ -147,6 +300,12 @@ function FileRow({
                     {' · '}
                     {new Date(v.createdAt).toLocaleString()} · {v.source}
                   </button>
+                  <FileDeleteHold
+                    compact
+                    label={`${ord} of ${f.name}`}
+                    title="Hold to delete this version"
+                    onHoldComplete={() => onDeleteVersion(v)}
+                  />
                 </li>
               )
             })}
@@ -262,6 +421,10 @@ export function FileLibrary({
   onOpenVersion,
   refreshKey,
   onLibraryChange,
+  onFileDeleted,
+  onVersionDeleted,
+  onFileMerged,
+  onVersionDetached,
 }: Props) {
   const [files, setFiles] = useState<FileRecord[]>([])
   const [groups, setGroups] = useState<GroupRecord[]>([])
@@ -336,10 +499,56 @@ export function FileLibrary({
   const byGroup = (groupId: number) =>
     files.filter((f) => f.groupId === groupId)
 
-  const handleFileDrop = async (e: DragEvent, targetGroupId: number | null) => {
+  const handleItemDropOnSection = async (
+    e: DragEvent,
+    targetGroupId: number | null
+  ) => {
     e.preventDefault()
     e.stopPropagation()
     setDropBand(null)
+
+    const verPayload = e.dataTransfer.getData(DND_VERSION_MIME)
+    if (verPayload) {
+      const seg = verPayload.split(':')
+      const sfid = Number(seg[0])
+      const vid = Number(seg[1])
+      if (!sfid || !vid) {
+        return
+      }
+      try {
+        const { newFileId } = await detachVersionToNewFile(
+          sfid,
+          vid,
+          targetGroupId
+        )
+        setDiffModal(null)
+        if (expandedId === sfid) {
+          const src = await getFileById(sfid)
+          if (!src) {
+            setExpandedId(null)
+            setVersions([])
+            setCompareAId(null)
+            setCompareBId(null)
+          } else {
+            const list = await listVersionsForFile(sfid)
+            setVersions(list)
+            if (list.length >= 2) {
+              setCompareAId(list[list.length - 1]!.id!)
+              setCompareBId(list[0]!.id!)
+            } else {
+              setCompareAId(null)
+              setCompareBId(null)
+            }
+          }
+        }
+        onVersionDetached?.(sfid, vid, newFileId)
+        reload()
+      } catch {
+        // ignore
+      }
+      return
+    }
+
     const idStr = e.dataTransfer.getData(DND_FILE_MIME)
     if (!idStr) {
       return
@@ -348,8 +557,31 @@ export function FileLibrary({
     if (!fileId) {
       return
     }
-    await setFileGroup(fileId, targetGroupId)
-    reload()
+    try {
+      const result = await moveFileToGroup(fileId, targetGroupId)
+      setDiffModal(null)
+      if (result.merged) {
+        const surv = result.survivingFileId
+        if (expandedId === fileId) {
+          setExpandedId(surv)
+        }
+        if (expandedId === fileId || expandedId === surv) {
+          const list = await listVersionsForFile(surv)
+          setVersions(list)
+          if (list.length >= 2) {
+            setCompareAId(list[list.length - 1]!.id!)
+            setCompareBId(list[0]!.id!)
+          } else {
+            setCompareAId(null)
+            setCompareBId(null)
+          }
+        }
+        onFileMerged?.(fileId, surv)
+      }
+      reload()
+    } catch {
+      // ignore
+    }
   }
 
   const handleGroupDrop = async (
@@ -373,14 +605,12 @@ export function FileLibrary({
   }
 
   const onGroupSectionDrop = (e: DragEvent, before: 'ungrouped' | number) => {
-    if (e.dataTransfer.getData(DND_FILE_MIME)) {
-      void (async () => {
-        if (before === 'ungrouped') {
-          await handleFileDrop(e, null)
-        } else {
-          await handleFileDrop(e, before)
-        }
-      })()
+    const targetGroupId = before === 'ungrouped' ? null : before
+    if (
+      e.dataTransfer.getData(DND_VERSION_MIME) ||
+      e.dataTransfer.getData(DND_FILE_MIME)
+    ) {
+      void handleItemDropOnSection(e, targetGroupId)
       return
     }
     if (e.dataTransfer.getData(DND_GROUP_MIME)) {
@@ -468,6 +698,51 @@ export function FileLibrary({
 
   const showSections = files.length > 0 || groups.length > 0
 
+  const removeFile = async (f: FileRecord) => {
+    if (expandedId === f.id) {
+      setExpandedId(null)
+      setVersions([])
+      setCompareAId(null)
+      setCompareBId(null)
+    }
+    setDiffModal(null)
+    await deleteFileAndVersions(f.id!)
+    onFileDeleted?.(f.id!)
+    reload()
+  }
+
+  const removeVersion = async (f: FileRecord, v: VersionRecord) => {
+    try {
+      const { fileRemoved } = await deleteVersionForFile(f.id!, v.id!)
+      setDiffModal(null)
+      if (fileRemoved) {
+        if (expandedId === f.id) {
+          setExpandedId(null)
+          setVersions([])
+          setCompareAId(null)
+          setCompareBId(null)
+        }
+        onFileDeleted?.(f.id!)
+      } else {
+        if (expandedId === f.id) {
+          const list = await listVersionsForFile(f.id!)
+          setVersions(list)
+          if (list.length >= 2) {
+            setCompareAId(list[list.length - 1]!.id!)
+            setCompareBId(list[0]!.id!)
+          } else {
+            setCompareAId(null)
+            setCompareBId(null)
+          }
+        }
+        onVersionDeleted?.(f.id!, v.id!)
+      }
+      reload()
+    } catch {
+      // ignore
+    }
+  }
+
   const renderFileRow = (f: FileRecord) => (
     <FileRow
       key={f.id}
@@ -514,6 +789,8 @@ export function FileLibrary({
         })
       }}
       onOpenV={(v, ord) => onOpenVersion(f, v, ord)}
+      onDeleteFile={() => removeFile(f)}
+      onDeleteVersion={(v) => removeVersion(f, v)}
     />
   )
 
@@ -657,6 +934,18 @@ export function FileLibrary({
                       {g.name}
                     </span>
                   )}
+                  <button
+                    type="button"
+                    className="file-library__group-rename-btn"
+                    title="Rename group"
+                    aria-label={`Rename group ${g.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      startRename(g)
+                    }}
+                  >
+                    ✎
+                  </button>
                   <button
                     type="button"
                     className="file-library__group-del"
