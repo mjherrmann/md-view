@@ -16,9 +16,10 @@ import {
   type FileRecord,
   type GroupRecord,
   type VersionRecord,
+  createChildGroup,
   createGroup,
   deleteFileAndVersions,
-  deleteGroup,
+  deleteGroupWithPromotion,
   deleteVersionForFile,
   detachVersionToNewFile,
   getFileById,
@@ -28,10 +29,13 @@ import {
   loadFileCurrent,
   moveFileToGroup,
   renameGroup,
-  reorderGroups,
+  reorderSiblings,
+  reparentGroup,
   versionOrdinalLabel,
 } from '../db/schema'
+import { buildGroupMaps, validateReparent } from '../db/groupTree'
 import { VersionDiffModal } from './VersionDiffModal'
+import { GroupNode } from './GroupNode'
 
 type Props = {
   activeFileId: number | null
@@ -380,10 +384,6 @@ function allowDrop(e: DragEvent) {
 /** 'u' = ungrouped; 'g' + id = named group (matches drop band keys) */
 type CollapseKey = `g${number}` | 'u'
 
-function collapseKeyForGroup(gid: number): CollapseKey {
-  return `g${gid}` as CollapseKey
-}
-
 function SectionChevronButton({
   expanded,
   onToggle,
@@ -445,7 +445,6 @@ export function FileLibrary({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     () => new Set()
   )
-  const editInputRef = useRef<HTMLInputElement>(null)
 
   const isSectionCollapsed = (key: CollapseKey) =>
     collapsedSections.has(key)
@@ -483,17 +482,8 @@ export function FileLibrary({
     }
   }, [refreshKey])
 
-  useEffect(() => {
-    if (editingGroupId != null) {
-      editInputRef.current?.focus()
-      editInputRef.current?.select()
-    }
-  }, [editingGroupId])
-
-  const orderIds = groups
-    .slice()
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((g) => g.id!)
+  const { childrenByParent } = buildGroupMaps(groups)
+  const rootGroups = childrenByParent.get(null) ?? []
 
   const ungroupedFiles = files.filter((f) => isUngrouped(f))
   const byGroup = (groupId: number) =>
@@ -599,8 +589,42 @@ export function FileLibrary({
     if (!sourceId) {
       return
     }
-    const next = computeOrderAfterGroupDrop(orderIds, sourceId, before)
-    await reorderGroups(next)
+
+    // Determine target parentId: dropping onto a group section means
+    // the target parent is that group; 'ungrouped' means root (null)
+    const targetParentId = before === 'ungrouped' ? null : before
+
+    // Look up the dragged group's current parentId
+    const { byId, childrenByParent: maps } = buildGroupMaps(groups)
+    const sourceGroup = byId.get(sourceId)
+    if (!sourceGroup) {
+      return
+    }
+    const sourceParentId = sourceGroup.parentId
+
+    if (sourceParentId === targetParentId) {
+      // Same parent → reorder among siblings
+      const siblings = (maps.get(targetParentId) ?? [])
+        .slice()
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map((g) => g.id!)
+      const next = computeOrderAfterGroupDrop(siblings, sourceId, before)
+      await reorderSiblings(targetParentId, next)
+    } else {
+      // Different parent → reparent operation
+      // Validate client-side first for fast no-op on self-drop, descendant-drop, depth overflow
+      const error = validateReparent(sourceId, targetParentId, byId, maps)
+      if (error) {
+        return // invalid drop — silently ignore (no state change)
+      }
+      try {
+        await reparentGroup(sourceId, targetParentId)
+      } catch {
+        // reparentGroup validates again with fresh DB state and throws on
+        // self-drop, descendant-drop, or depth overflow — silently ignore
+        return
+      }
+    }
     reload()
   }
 
@@ -637,6 +661,25 @@ export function FileLibrary({
     })()
   }
 
+  const handleCreateChildGroup = (parentId: number) => {
+    const name = window.prompt('Name for the new child group')
+    if (name == null) {
+      return
+    }
+    const t = name.trim()
+    if (!t) {
+      return
+    }
+    void (async () => {
+      try {
+        await createChildGroup(t, parentId)
+        reload()
+      } catch {
+        // ignore
+      }
+    })()
+  }
+
   const startRename = (g: GroupRecord) => {
     setEditingGroupId(g.id!)
     setEditName(g.name)
@@ -655,11 +698,22 @@ export function FileLibrary({
   }
 
   const onDeleteGroup = (g: GroupRecord) => {
-    if (!window.confirm(`Delete group “${g.name}”? Files will move to Ungrouped.`)) {
+    const childGroups = groups.filter((c) => c.parentId === g.id)
+    const groupFiles = files.filter((f) => f.groupId === g.id)
+    const parentName = g.parentId != null
+      ? groups.find((p) => p.id === g.parentId)?.name ?? 'parent group'
+      : 'Ungrouped'
+
+    const message =
+      `Delete group “${g.name}”?\n\n` +
+      `${childGroups.length} child group(s) and ${groupFiles.length} file(s) ` +
+      `will be moved to ${parentName}.`
+
+    if (!window.confirm(message)) {
       return
     }
     void (async () => {
-      await deleteGroup(g.id!)
+      await deleteGroupWithPromotion(g.id!)
       reload()
     })()
   }
@@ -851,120 +905,29 @@ export function FileLibrary({
             ) : null}
           </section>
 
-          {groups.map((g) => {
-            const gid = g.id!
-            const band = `g-${gid}`
-            const collapseKey = collapseKeyForGroup(gid)
-            const sectionCollapsed = isSectionCollapsed(collapseKey)
-            const inGroup = byGroup(gid)
-            return (
-              <section
-                key={gid}
-                className={
-                  'file-library__section' +
-                  (dropBand === band
-                    ? ' file-library__section--drop'
-                    : '')
-                }
-                onDragOver={(e) => {
-                  allowDrop(e)
-                  setDropBand(band)
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                    setDropBand(null)
-                  }
-                }}
-                onDrop={(e) => onGroupSectionDrop(e, gid)}
-              >
-                <div className="file-library__group-head">
-                  <SectionChevronButton
-                    expanded={!sectionCollapsed}
-                    onToggle={() => {
-                      toggleSectionCollapse(collapseKey)
-                    }}
-                    label={
-                      sectionCollapsed
-                        ? `Expand group ${g.name}`
-                        : `Collapse group ${g.name}`
-                    }
-                  />
-                  <span
-                    className="file-library__grip"
-                    title="Drag to reorder"
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData(
-                        DND_GROUP_MIME,
-                        String(gid)
-                      )
-                      e.dataTransfer.effectAllowed = 'move'
-                      e.stopPropagation()
-                    }}
-                  >
-                    ⠿
-                  </span>
-                  {editingGroupId === gid ? (
-                    <input
-                      ref={editInputRef}
-                      className="file-library__group-rename"
-                      value={editName}
-                      onChange={(e) => {
-                        setEditName(e.target.value)
-                      }}
-                      onBlur={() => {
-                        commitRename(g)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          commitRename(g)
-                        } else if (e.key === 'Escape') {
-                          setEditingGroupId(null)
-                        }
-                      }}
-                    />
-                  ) : (
-                    <span
-                      className="file-library__group-title file-library__group-title--pressable"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation()
-                        startRename(g)
-                      }}
-                    >
-                      {g.name}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="file-library__group-rename-btn"
-                    title="Rename group"
-                    aria-label={`Rename group ${g.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      startRename(g)
-                    }}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    type="button"
-                    className="file-library__group-del"
-                    title="Delete group"
-                    onClick={() => {
-                      onDeleteGroup(g)
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-                {inGroup.length > 0 && !sectionCollapsed ? (
-                  <ul className="file-library__file-list">
-                    {inGroup.map(renderFileRow)}
-                  </ul>
-                ) : null}
-              </section>
-            )
-          })}
+          {rootGroups.map((g) => (
+            <GroupNode
+              key={g.id}
+              group={g}
+              depth={0}
+              childrenByParent={childrenByParent}
+              filesByGroup={byGroup}
+              renderFileRow={renderFileRow}
+              dropBand={dropBand}
+              setDropBand={setDropBand}
+              isSectionCollapsed={isSectionCollapsed}
+              toggleSectionCollapse={toggleSectionCollapse}
+              editingGroupId={editingGroupId}
+              editName={editName}
+              setEditName={setEditName}
+              startRename={startRename}
+              commitRename={commitRename}
+              setEditingGroupId={setEditingGroupId}
+              onDeleteGroup={onDeleteGroup}
+              onCreateChildGroup={handleCreateChildGroup}
+              onGroupSectionDrop={onGroupSectionDrop}
+            />
+          ))}
         </div>
       )}
 

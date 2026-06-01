@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie'
+import { buildGroupMaps, computeDepth, validateReparent } from './groupTree'
 
 export type GroupPlacement = 'auto' | 'manual'
 
@@ -25,6 +26,7 @@ export interface GroupRecord {
   id?: number
   name: string
   sortOrder: number
+  parentId: number | null
 }
 
 /** New OS drops land in this group (created on first use). */
@@ -77,6 +79,21 @@ export class MdDatabase extends Dexie {
           delete row.entryPath
         })
       })
+    this.version(5)
+      .stores({
+        files:
+          '++id, name, updatedAt, currentVersionId, groupId, groupPlacement',
+        versions: '++id, fileId, createdAt',
+        groups: '++id, name, sortOrder, parentId',
+      })
+      .upgrade(async (tx) => {
+        const t = tx.table('groups')
+        await t.toCollection().modify((row: Record<string, unknown>) => {
+          if (row.parentId === undefined) {
+            row.parentId = null
+          }
+        })
+      })
   }
 }
 
@@ -97,6 +114,7 @@ async function findOrCreateGroupIdByName(name: string): Promise<number> {
   return (await db.groups.add({
     name: trimmed,
     sortOrder: maxOrder + 1,
+    parentId: null,
   })) as number
 }
 
@@ -322,7 +340,109 @@ export async function createGroup(name: string): Promise<number> {
   return (await db.groups.add({
     name: trimmed,
     sortOrder: maxOrder + 1,
+    parentId: null,
   })) as number
+}
+
+/** Create a child group under a specific parent (or at root if parentId is null). */
+export async function createChildGroup(
+  name: string,
+  parentId: number | null
+): Promise<number> {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error(
+      'Cannot create group: name is empty or contains only whitespace.'
+    )
+  }
+
+  return await db.transaction('rw', [db.groups], async () => {
+    // Validate depth constraint when parentId is specified
+    if (parentId !== null) {
+      const allGroups = await db.groups.toArray()
+      const { byId } = buildGroupMaps(allGroups)
+      const parent = byId.get(parentId)
+      if (!parent) {
+        throw new Error(
+          `Cannot create child group: parent group with id ${parentId} does not exist.`
+        )
+      }
+      const parentDepth = computeDepth(parentId, byId)
+      if (parentDepth >= 3) {
+        throw new Error(
+          `Cannot create child group under group ${parentId}: parent is at depth ${parentDepth}, child would exceed maximum depth of 3.`
+        )
+      }
+    }
+
+    // Compute sortOrder among siblings (groups sharing same parentId)
+    const siblings = await db.groups
+      .filter((g) => g.parentId === parentId)
+      .toArray()
+    const maxOrder =
+      siblings.length > 0
+        ? Math.max(...siblings.map((g) => g.sortOrder), -1)
+        : -1
+
+    return (await db.groups.add({
+      name: trimmed,
+      sortOrder: maxOrder + 1,
+      parentId,
+    })) as number
+  })
+}
+
+/** Reparent a group to a new parent (or root). Atomic transaction. */
+export async function reparentGroup(
+  groupId: number,
+  newParentId: number | null
+): Promise<void> {
+  await db.transaction('rw', [db.groups], async () => {
+    const allGroups = await db.groups.toArray()
+    const { byId, childrenByParent } = buildGroupMaps(allGroups)
+
+    const error = validateReparent(groupId, newParentId, byId, childrenByParent)
+    if (error) {
+      throw new Error(error)
+    }
+
+    const group = byId.get(groupId)!
+    const oldParentId = group.parentId
+
+    // Compute sortOrder at end of new siblings
+    const newSiblings = (childrenByParent.get(newParentId) ?? []).filter(
+      (g) => g.id !== groupId
+    )
+    const maxOrder =
+      newSiblings.length > 0
+        ? Math.max(...newSiblings.map((g) => g.sortOrder))
+        : -1
+
+    await db.groups.update(groupId, {
+      parentId: newParentId,
+      sortOrder: maxOrder + 1,
+    })
+
+    // Recompute contiguous sortOrder for old parent's remaining siblings
+    if (oldParentId !== newParentId) {
+      const oldSiblings = await db.groups
+        .filter((g) => g.parentId === oldParentId && g.id !== groupId)
+        .sortBy('sortOrder')
+
+      for (let i = 0; i < oldSiblings.length; i++) {
+        await db.groups.update(oldSiblings[i]!.id!, { sortOrder: i })
+      }
+
+      // Recompute contiguous sortOrder for new parent's siblings (including moved group)
+      const newSiblingsAll = await db.groups
+        .filter((g) => g.parentId === newParentId)
+        .sortBy('sortOrder')
+
+      for (let i = 0; i < newSiblingsAll.length; i++) {
+        await db.groups.update(newSiblingsAll[i]!.id!, { sortOrder: i })
+      }
+    }
+  })
 }
 
 export async function renameGroup(id: number, name: string): Promise<void> {
@@ -347,6 +467,83 @@ export async function reorderGroups(orderedIds: number[]): Promise<void> {
     for (let i = 0; i < orderedIds.length; i++) {
       const id = orderedIds[i]!
       await db.groups.update(id, { sortOrder: i })
+    }
+  })
+}
+
+/** Delete a group, promoting children and files to the deleted group's parent. */
+export async function deleteGroupWithPromotion(
+  groupId: number
+): Promise<{ promotedGroupIds: number[]; promotedFileIds: number[] }> {
+  return await db.transaction('rw', [db.groups, db.files], async () => {
+    const group = await db.groups.get(groupId)
+    if (!group) {
+      throw new Error(
+        `Cannot delete group: group with id ${groupId} does not exist.`
+      )
+    }
+
+    const parentId = group.parentId // promotion target (may be null)
+
+    // Promote direct child groups to deleted group's parent
+    const directChildren = await db.groups
+      .filter((g) => g.parentId === groupId)
+      .toArray()
+    const promotedGroupIds = directChildren.map((g) => g.id!)
+
+    for (const child of directChildren) {
+      await db.groups.update(child.id!, { parentId })
+    }
+
+    // Move files to parent group (or ungrouped if parentId is null)
+    const affectedFiles = await db.files
+      .filter((f) => f.groupId === groupId)
+      .toArray()
+    const promotedFileIds = affectedFiles.map((f) => f.id!)
+
+    if (affectedFiles.length > 0) {
+      await db.files
+        .filter((f) => f.groupId === groupId)
+        .modify({ groupId: parentId ?? null })
+    }
+
+    // Delete the group
+    await db.groups.delete(groupId)
+
+    // Recompute contiguous sortOrder for all siblings of the promotion target
+    const siblings = await db.groups
+      .filter((g) => g.parentId === parentId)
+      .sortBy('sortOrder')
+
+    for (let i = 0; i < siblings.length; i++) {
+      await db.groups.update(siblings[i]!.id!, { sortOrder: i })
+    }
+
+    return { promotedGroupIds, promotedFileIds }
+  })
+}
+
+/** Reorder siblings sharing the same parentId. Atomic transaction. No-op if order unchanged. */
+export async function reorderSiblings(
+  parentId: number | null,
+  orderedIds: number[]
+): Promise<void> {
+  await db.transaction('rw', [db.groups], async () => {
+    const currentSiblings = await db.groups
+      .filter((g) => g.parentId === parentId)
+      .sortBy('sortOrder')
+
+    const currentOrder = currentSiblings.map((g) => g.id!)
+    const orderUnchanged =
+      currentOrder.length === orderedIds.length &&
+      currentOrder.every((id, i) => id === orderedIds[i])
+
+    if (orderUnchanged) {
+      return
+    }
+
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.groups.update(orderedIds[i]!, { sortOrder: i })
     }
   })
 }

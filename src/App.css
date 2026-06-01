@@ -180,6 +180,44 @@
   outline-offset: -2px;
 }
 
+/* Indentation guide lines for nested groups */
+.file-library__section[data-depth="1"]::before,
+.file-library__section[data-depth="2"]::before,
+.file-library__section[data-depth="3"]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+}
+
+.file-library__section[data-depth="1"],
+.file-library__section[data-depth="2"],
+.file-library__section[data-depth="3"] {
+  position: relative;
+}
+
+.file-library__section[data-depth="1"]::before {
+  left: 16px;
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.file-library__section[data-depth="2"]::before {
+  left: 16px;
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent),
+    16px 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.file-library__section[data-depth="3"]::before {
+  left: 16px;
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent),
+    16px 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent),
+    32px 0 0 0.5px color-mix(in srgb, var(--border) 70%, transparent);
+}
+
 .file-library__group-head {
   display: flex;
   align-items: center;
