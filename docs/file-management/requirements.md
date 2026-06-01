@@ -90,7 +90,7 @@
 
 1. THE system SHALL support creating named groups via a "+ Group" button (prompts for name).
 2. THE system SHALL support renaming groups via double-click or a rename (✎) button.
-3. THE system SHALL support deleting groups (with confirmation); child groups are promoted to the deleted group's parent and files move to the parent group or Ungrouped.
+3. THE system SHALL support deleting groups via a bin icon button on the group header (with confirmation); child groups are promoted to the deleted group's parent and files move to the parent group or Ungrouped.
 4. Groups SHALL be reorderable via drag-and-drop of the grip handle (⠿) among siblings sharing the same `parentId`.
 5. New OS drops SHALL always land in a group named "Dropped" (auto-created on first use).
 6. THE Group_Table SHALL include a `parentId` field (nullable foreign key referencing another group's `id`). If `parentId` is null, the group is a root group displayed at the top level.
@@ -185,10 +185,9 @@
 
 #### Acceptance Criteria
 
-1. WHEN the "+ Group" button is activated with no parent context, THE system SHALL create the new group with `parentId` null and `sortOrder` one greater than the highest among existing root groups (or 0 if none exist).
-2. WHEN a "create child group" action is activated within a parent group's section, THE system SHALL create the new group as a child of that parent with appropriate `sortOrder`.
-3. THE system SHALL NOT present the "create child group" action on groups already at depth 2 (maximum nesting reached).
-4. IF the user provides a group name that is empty or contains only whitespace, THE system SHALL not create the group.
+1. WHEN the "+ Group" button in the sidebar toolbar is activated, THE system SHALL prompt for a name and create the new group with `parentId` null and `sortOrder` one greater than the highest among existing root groups (or 0 if none exist).
+2. THE system SHALL NOT present an inline "create child group" action on individual group headers; all group creation uses the global "+ Group" button.
+3. IF the user provides a group name that is empty or contains only whitespace, THE system SHALL not create the group.
 
 ### Requirement 15: Group Deletion in Nested Context
 

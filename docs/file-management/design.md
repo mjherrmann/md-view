@@ -264,7 +264,7 @@ function GroupNode({
 - Each level adds 16px left padding relative to parent
 - Vertical guide lines rendered via CSS `::before` pseudo-elements on nested sections
 - Collapse state tracked per group (existing `collapsedSections` set, keyed by group ID)
-- "Create child group" context action shown on groups at depth < 3 (max depth 2)
+- Bin icon button for group deletion (no inline create-child action; creation uses global "+ Group" button)
 
 ### App (orchestrator)
 

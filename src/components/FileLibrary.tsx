@@ -16,7 +16,6 @@ import {
   type FileRecord,
   type GroupRecord,
   type VersionRecord,
-  createChildGroup,
   createGroup,
   deleteFileAndVersions,
   deleteGroupWithPromotion,
@@ -661,25 +660,6 @@ export function FileLibrary({
     })()
   }
 
-  const handleCreateChildGroup = (parentId: number) => {
-    const name = window.prompt('Name for the new child group')
-    if (name == null) {
-      return
-    }
-    const t = name.trim()
-    if (!t) {
-      return
-    }
-    void (async () => {
-      try {
-        await createChildGroup(t, parentId)
-        reload()
-      } catch {
-        // ignore
-      }
-    })()
-  }
-
   const startRename = (g: GroupRecord) => {
     setEditingGroupId(g.id!)
     setEditName(g.name)
@@ -924,7 +904,6 @@ export function FileLibrary({
               commitRename={commitRename}
               setEditingGroupId={setEditingGroupId}
               onDeleteGroup={onDeleteGroup}
-              onCreateChildGroup={handleCreateChildGroup}
               onGroupSectionDrop={onGroupSectionDrop}
             />
           ))}

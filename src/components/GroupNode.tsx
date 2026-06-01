@@ -67,7 +67,6 @@ export type GroupNodeProps = {
   setEditingGroupId: (id: number | null) => void
   /** Group actions */
   onDeleteGroup: (g: GroupRecord) => void
-  onCreateChildGroup: (parentId: number) => void
   /** Drop handler for file/version/group drops on a section */
   onGroupSectionDrop: (e: DragEvent, target: 'ungrouped' | number) => void
 }
@@ -89,7 +88,6 @@ export function GroupNode({
   commitRename,
   setEditingGroupId,
   onDeleteGroup,
-  onCreateChildGroup,
   onGroupSectionDrop,
 }: GroupNodeProps): JSX.Element {
   const editInputRef = useRef<HTMLInputElement>(null)
@@ -186,29 +184,18 @@ export function GroupNode({
         >
           ✎
         </button>
-        {depth < 3 && (
-          <button
-            type="button"
-            className="file-library__group-add-child"
-            title="Create child group"
-            aria-label={`Create child group in ${group.name}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onCreateChildGroup(gid)
-            }}
-          >
-            +
-          </button>
-        )}
         <button
           type="button"
           className="file-library__group-del"
           title="Delete group"
+          aria-label={`Delete group ${group.name}`}
           onClick={() => {
             onDeleteGroup(group)
           }}
         >
-          ×
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden>
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4v2H5V4h3.5l1-1h5l1 1H19z" />
+          </svg>
         </button>
       </div>
       {!sectionCollapsed && (
@@ -237,7 +224,6 @@ export function GroupNode({
               commitRename={commitRename}
               setEditingGroupId={setEditingGroupId}
               onDeleteGroup={onDeleteGroup}
-              onCreateChildGroup={onCreateChildGroup}
               onGroupSectionDrop={onGroupSectionDrop}
             />
           ))}
