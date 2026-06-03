@@ -120,9 +120,9 @@
 
 /* —— File library —— */
 .file-library {
-  width: 17rem;
-  min-width: 12rem;
-  max-width: 40%;
+  width: var(--sidebar-width, 17rem);
+  min-width: 0;
+  flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--panel);
   display: flex;
@@ -1042,10 +1042,33 @@
     flex-direction: column;
   }
   .file-library {
-    width: 100%;
+    width: 100% !important;
     max-width: 100%;
     max-height: 8rem;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+/* —— Resize handle —— */
+.resize-handle {
+  flex-shrink: 0;
+  width: 2px;
+  padding: 0 3px;
+  background-clip: content-box;
+  background-color: var(--border);
+  cursor: col-resize;
+  align-self: stretch;
+  touch-action: none;
+}
+
+.resize-handle:hover,
+.resize-handle--active {
+  background-color: color-mix(in srgb, var(--text-muted) 60%, var(--border));
+}
+
+@media (max-width: 48rem) {
+  .resize-handle {
+    display: none;
   }
 }

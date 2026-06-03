@@ -4,6 +4,8 @@ import './App.css'
 import { DropZone } from './components/DropZone'
 import { FileLibrary } from './components/FileLibrary'
 import { MarkdownPane } from './components/MarkdownPane'
+import { ResizeHandle } from './components/resize/ResizeHandle'
+import { useResizable } from './components/resize/useResizable'
 import {
   type FileRecord,
   type VersionRecord,
@@ -24,6 +26,12 @@ function parseMarkdownFile(raw: string) {
 }
 
 export default function App() {
+  const { width, isDragging, isMobile, handleProps } = useResizable({
+    defaultWidth: 272,
+    minWidth: 120,
+    maxWidthRatio: 0.5,
+  })
+
   const [markdown, setMarkdown] = useState('')
   const [fileName, setFileName] = useState<string | null>(null)
   const [frontMatter, setFrontMatter] = useState<Record<string, unknown> | null>(
@@ -241,6 +249,7 @@ export default function App() {
 
       <div className="app__body">
         <FileLibrary
+          style={{ width }}
           activeFileId={activeFileId}
           activeVersionId={activeVersionId}
           onOpenVersion={onOpenVersion}
@@ -251,6 +260,7 @@ export default function App() {
           onFileMerged={onFileMergedFromLibrary}
           onVersionDetached={onVersionDetachedFromLibrary}
         />
+        <ResizeHandle isDragging={isDragging} isMobile={isMobile} handleProps={handleProps} />
         <DropZone className="app__main" onFiles={onFilesDropped}>
           {frontMatter && (
             <details className="app__meta">

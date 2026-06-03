@@ -57,6 +57,8 @@ type Props = {
     versionId: number,
     newFileId: number
   ) => void
+  /** Inline styles applied to the root aside element (used for dynamic width). */
+  style?: React.CSSProperties
 }
 
 const HOLD_DELETE_MS = 700
@@ -424,6 +426,7 @@ export function FileLibrary({
   onVersionDeleted,
   onFileMerged,
   onVersionDetached,
+  style,
 }: Props) {
   const [files, setFiles] = useState<FileRecord[]>([])
   const [groups, setGroups] = useState<GroupRecord[]>([])
@@ -464,6 +467,8 @@ export function FileLibrary({
     onLibraryChange()
   }
 
+  const initialCollapseApplied = useRef(false)
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -474,6 +479,12 @@ export function FileLibrary({
       if (!cancelled) {
         setFiles(f)
         setGroups(g)
+        if (!initialCollapseApplied.current && g.length > 0) {
+          initialCollapseApplied.current = true
+          setCollapsedSections(
+            new Set(g.map((gr) => `g${gr.id!}` as CollapseKey))
+          )
+        }
       }
     })()
     return () => {
@@ -829,7 +840,7 @@ export function FileLibrary({
   )
 
   return (
-    <aside className="file-library">
+    <aside className="file-library" style={style}>
       <div className="file-library__toolbar">
         <h2 className="file-library__title">Saved</h2>
         <button
