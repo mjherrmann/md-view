@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
-import { clampWidth, computeWidth } from '../clampWidth'
+import { computeWidth } from '../clampWidth'
 
 /**
  * Property 1: Width calculation tracks pointer with offset

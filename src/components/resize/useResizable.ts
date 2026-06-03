@@ -18,7 +18,7 @@ export interface UseResizableReturn {
     onKeyDown: (e: React.KeyboardEvent) => void
     tabIndex: number
     role: string
-    'aria-orientation': string
+    'aria-orientation': 'vertical' | 'horizontal'
     'aria-valuemin': number
     'aria-valuemax': number
     'aria-valuenow': number

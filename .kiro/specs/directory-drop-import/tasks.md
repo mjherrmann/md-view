@@ -16,7 +16,7 @@ Implement directory drop import by creating a pure traversal module, extending t
     - Skip files that fail to read or have empty/whitespace-only basenames
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 4.4, 6.1_
 
-  - [ ]* 1.2 Write property tests for traversal logic (`src/lib/__tests__/directoryImport.property.test.ts`)
+  - [ ] 1.2 Write property tests for traversal logic (`src/lib/__tests__/directoryImport.property.test.ts`)
     - **Property 7: Readability filter** — only `.md`, `.markdown`, `.txt` or matching MIME types pass
     - **Property 8: Depth-limited traversal** — entries beyond depth 10 never visited
     - **Property 9: File count cap** — output length never exceeds 200
@@ -40,7 +40,7 @@ Implement directory drop import by creating a pure traversal module, extending t
     - Return created `FileRecord[]`
     - _Requirements: 3.4, 4.1, 4.2, 4.3_
 
-  - [ ]* 2.3 Write property tests for group creation/reuse (`src/db/__tests__/directoryGroup.property.test.ts`)
+  - [ ] 2.3 Write property tests for group creation/reuse (`src/db/__tests__/directoryGroup.property.test.ts`)
     - **Property 2: Group name derivation** — result equals trimmed + truncated input, parentId = null
     - **Property 3: Group reuse idempotence** — matching name returns same ID, sortOrder unchanged
     - **Property 4: Group sort order assignment** — new group gets max(existing) + 1
@@ -60,7 +60,7 @@ Implement directory drop import by creating a pure traversal module, extending t
     - Continue ignoring internal library drags
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-  - [ ]* 4.2 Write unit tests for DropZone directory detection
+  - [ ] 4.2 Write unit tests for DropZone directory detection
     - Test `webkitGetAsEntry` fallback behaviour (Req 1.4)
     - Test internal drag guard still works (Req 1.3)
     - Test mixed drop dispatches both callbacks independently (Req 1.2)
@@ -76,7 +76,7 @@ Implement directory drop import by creating a pure traversal module, extending t
     - Pass handler to `DropZone` as `onDirectories` prop
     - _Requirements: 5.1, 5.2, 5.3, 6.3_
 
-  - [ ]* 5.2 Write integration property tests (`src/db/__tests__/directoryImportIntegration.property.test.ts`)
+  - [ ] 5.2 Write integration property tests (`src/db/__tests__/directoryImportIntegration.property.test.ts`)
     - **Property 1: Flat import invariant** — at most one root group created, all files share same groupId
     - **Property 6: File record shape** — name = basename, groupPlacement = 'auto', one version with source = 'drop'
     - **Property 11: Mixed drop dispatch** — files and directories processed independently
