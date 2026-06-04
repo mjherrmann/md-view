@@ -3,6 +3,7 @@ import {
   DND_GROUP_MIME,
 } from '../dnd'
 import type { FileRecord, GroupRecord } from '../db/schema'
+import { FileDeleteHold } from './FileDeleteHold'
 
 type CollapseKey = `g${number}` | 'u'
 
@@ -184,19 +185,11 @@ export function GroupNode({
         >
           ✎
         </button>
-        <button
-          type="button"
-          className="file-library__group-del"
-          title="Delete group"
-          aria-label={`Delete group ${group.name}`}
-          onClick={() => {
-            onDeleteGroup(group)
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden>
-            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4v2H5V4h3.5l1-1h5l1 1H19z" />
-          </svg>
-        </button>
+        <FileDeleteHold
+          label={group.name}
+          title={`Hold to delete group ${group.name}`}
+          onHoldComplete={() => { onDeleteGroup(group) }}
+        />
       </div>
       {!sectionCollapsed && (
         <>
