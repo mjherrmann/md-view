@@ -1,6 +1,8 @@
 # Requirements Document
 
-> Status: Draft
+> Status: Accepted
+> Accepted by: Michael Herrmann
+> Accepted on: 2025-07-14
 
 ## Introduction
 

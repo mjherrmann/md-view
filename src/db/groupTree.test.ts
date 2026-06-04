@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { GroupRecord } from './schema'
-import { buildGroupMaps, computeDepth, getAncestorIds, getDescendantIds, validateReparent } from './groupTree'
+import { buildGroupMaps, computeDepth, getAncestorIds, getDescendantIds, validateReparent, MAX_DEPTH } from './groupTree'
 
 describe('buildGroupMaps', () => {
   it('returns empty maps for empty input', () => {
@@ -261,19 +261,15 @@ describe('validateReparent', () => {
     expect(validateReparent(1, null, byId, childrenByParent)).toBeNull()
   })
 
-  it('returns error when moving to root with subtree too deep (subtreeMaxDepth > 3)', () => {
-    // Group 1 has child 2, grandchild 3, great-grandchild 4 → subtreeMaxDepth = 3
-    // Moving to root: -1 + 1 + 3 = 3 ≤ 3 → valid actually
-    // Need subtreeMaxDepth = 4 to fail: add one more level
-    const groups: GroupRecord[] = [
-      { id: 1, name: 'A', sortOrder: 0, parentId: null },
-      { id: 2, name: 'B', sortOrder: 0, parentId: 1 },
-      { id: 3, name: 'C', sortOrder: 0, parentId: 2 },
-      { id: 4, name: 'D', sortOrder: 0, parentId: 3 },
-      { id: 5, name: 'E', sortOrder: 0, parentId: 4 },
-    ]
+  it('returns error when moving to root with subtree too deep (subtreeMaxDepth > MAX_DEPTH)', () => {
+    // Build a chain of MAX_DEPTH + 1 levels under group 1 so subtreeMaxDepth = MAX_DEPTH + 1
+    // Moving to root: targetDepth=-1, so -1+1+(MAX_DEPTH+1) = MAX_DEPTH+1 > MAX_DEPTH
+    const groups: GroupRecord[] = []
+    for (let i = 1; i <= MAX_DEPTH + 2; i++) {
+      groups.push({ id: i, name: `G${i}`, sortOrder: 0, parentId: i === 1 ? null : i - 1 })
+    }
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // subtreeMaxDepth of group 1 = 4, targetDepth = -1 → -1+1+4 = 4 > 3
+    // subtreeMaxDepth of group 1 = MAX_DEPTH + 1, targetDepth = -1 → -1+1+(MAX_DEPTH+1) > MAX_DEPTH
     const result = validateReparent(1, null, byId, childrenByParent)
     expect(result).not.toBeNull()
     expect(result).toContain('exceed maximum nesting depth')
@@ -314,75 +310,84 @@ describe('validateReparent', () => {
     expect(result).toContain('descendant')
   })
 
-  it('returns error for depth overflow (targetDepth + 1 + subtreeMaxDepth > 3)', () => {
-    // Target at depth 2, group has subtreeMaxDepth 1 → 2+1+1 = 4 > 3
-    const groups: GroupRecord[] = [
-      { id: 10, name: 'Root', sortOrder: 0, parentId: null },
-      { id: 11, name: 'L1', sortOrder: 0, parentId: 10 },
-      { id: 12, name: 'L2', sortOrder: 0, parentId: 11 },
-      // Group to move: has one child
-      { id: 20, name: 'Mover', sortOrder: 1, parentId: null },
-      { id: 21, name: 'MoverChild', sortOrder: 0, parentId: 20 },
-    ]
+  it('returns error for depth overflow (targetDepth + 1 + subtreeMaxDepth > MAX_DEPTH)', () => {
+    // Build a target chain of MAX_DEPTH - 1 levels, then move a group with subtreeMaxDepth=1 into deepest
+    // targetDepth = MAX_DEPTH - 2 (0-indexed from root), so (MAX_DEPTH-2)+1+1 = MAX_DEPTH → not > MAX_DEPTH
+    // Need subtreeMaxDepth=2 to overflow: (MAX_DEPTH-2)+1+2 = MAX_DEPTH+1 > MAX_DEPTH
+    const groups: GroupRecord[] = []
+    // Chain: ids 10..10+(MAX_DEPTH-2) forming depths 0..(MAX_DEPTH-2)
+    for (let i = 0; i <= MAX_DEPTH - 2; i++) {
+      groups.push({ id: 10 + i, name: `L${i}`, sortOrder: 0, parentId: i === 0 ? null : 10 + i - 1 })
+    }
+    const deepestId = 10 + MAX_DEPTH - 2
+    // Group to move: has a child and grandchild (subtreeMaxDepth=2)
+    groups.push({ id: 20, name: 'Mover', sortOrder: 1, parentId: null })
+    groups.push({ id: 21, name: 'MoverChild', sortOrder: 0, parentId: 20 })
+    groups.push({ id: 22, name: 'MoverGrandchild', sortOrder: 0, parentId: 21 })
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // Move group 20 (subtreeMaxDepth=1) into group 12 (depth=2)
-    // 2 + 1 + 1 = 4 > 3 → invalid
-    const result = validateReparent(20, 12, byId, childrenByParent)
+    // Move group 20 (subtreeMaxDepth=2) into deepest (depth=MAX_DEPTH-2)
+    // (MAX_DEPTH-2) + 1 + 2 = MAX_DEPTH + 1 > MAX_DEPTH → invalid
+    const result = validateReparent(20, deepestId, byId, childrenByParent)
     expect(result).not.toBeNull()
     expect(result).toContain('exceed maximum nesting depth')
   })
 
   it('returns null for valid reparent within depth limits', () => {
-    // Target at depth 1, group has subtreeMaxDepth 0 → 1+1+0 = 2 ≤ 3
+    // Target at depth 1, group has subtreeMaxDepth 0 → 1+1+0 = 2 ≤ MAX_DEPTH
     const groups: GroupRecord[] = [
       { id: 1, name: 'Root', sortOrder: 0, parentId: null },
       { id: 2, name: 'L1', sortOrder: 0, parentId: 1 },
       { id: 3, name: 'Mover', sortOrder: 1, parentId: null },
     ]
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // Move group 3 (no children) into group 2 (depth 1) → 1+1+0 = 2 ≤ 3
+    // Move group 3 (no children) into group 2 (depth 1) → 1+1+0 = 2 ≤ MAX_DEPTH
     expect(validateReparent(3, 2, byId, childrenByParent)).toBeNull()
   })
 
-  it('returns null at exact max depth boundary (targetDepth + 1 + subtreeMaxDepth === 3)', () => {
-    // Target at depth 1, group has subtreeMaxDepth 1 → 1+1+1 = 3 ≤ 3 → valid
-    const groups: GroupRecord[] = [
-      { id: 1, name: 'Root', sortOrder: 0, parentId: null },
-      { id: 2, name: 'L1', sortOrder: 0, parentId: 1 },
-      { id: 3, name: 'Mover', sortOrder: 1, parentId: null },
-      { id: 4, name: 'MoverChild', sortOrder: 0, parentId: 3 },
-    ]
+  it('returns null at exact max depth boundary (targetDepth + 1 + subtreeMaxDepth === MAX_DEPTH)', () => {
+    // Build a target chain so targetDepth = MAX_DEPTH - 2, mover has subtreeMaxDepth = 1
+    // (MAX_DEPTH-2)+1+1 = MAX_DEPTH → valid (not >)
+    const groups: GroupRecord[] = []
+    for (let i = 0; i <= MAX_DEPTH - 2; i++) {
+      groups.push({ id: i + 1, name: `L${i}`, sortOrder: 0, parentId: i === 0 ? null : i })
+    }
+    const targetId = MAX_DEPTH - 1
+    groups.push({ id: 50, name: 'Mover', sortOrder: 1, parentId: null })
+    groups.push({ id: 51, name: 'MoverChild', sortOrder: 0, parentId: 50 })
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // Move group 3 (subtreeMaxDepth=1) into group 2 (depth=1) → 1+1+1 = 3 ≤ 3
-    expect(validateReparent(3, 2, byId, childrenByParent)).toBeNull()
+    // (MAX_DEPTH-2)+1+1 = MAX_DEPTH ≤ MAX_DEPTH → valid
+    expect(validateReparent(50, targetId, byId, childrenByParent)).toBeNull()
   })
 
-  it('returns error one past max depth boundary (targetDepth + 1 + subtreeMaxDepth === 4)', () => {
-    // Target at depth 1, group has subtreeMaxDepth 2 → 1+1+2 = 4 > 3
-    const groups: GroupRecord[] = [
-      { id: 1, name: 'Root', sortOrder: 0, parentId: null },
-      { id: 2, name: 'L1', sortOrder: 0, parentId: 1 },
-      { id: 3, name: 'Mover', sortOrder: 1, parentId: null },
-      { id: 4, name: 'MoverChild', sortOrder: 0, parentId: 3 },
-      { id: 5, name: 'MoverGrandchild', sortOrder: 0, parentId: 4 },
-    ]
+  it('returns error one past max depth boundary (targetDepth + 1 + subtreeMaxDepth === MAX_DEPTH + 1)', () => {
+    // Target at depth MAX_DEPTH - 2, group has subtreeMaxDepth=2
+    // (MAX_DEPTH-2)+1+2 = MAX_DEPTH+1 > MAX_DEPTH → invalid
+    const groups: GroupRecord[] = []
+    // Chain: ids 1..MAX_DEPTH-1 forming depths 0..(MAX_DEPTH-2)
+    for (let i = 0; i <= MAX_DEPTH - 2; i++) {
+      groups.push({ id: i + 1, name: `L${i}`, sortOrder: 0, parentId: i === 0 ? null : i })
+    }
+    const targetId = MAX_DEPTH - 1 // deepest in the chain, at depth MAX_DEPTH-2
+    // Mover group with subtreeMaxDepth = 2
+    groups.push({ id: 100, name: 'Mover', sortOrder: 1, parentId: null })
+    groups.push({ id: 101, name: 'MoverChild', sortOrder: 0, parentId: 100 })
+    groups.push({ id: 102, name: 'MoverGrandchild', sortOrder: 0, parentId: 101 })
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // Move group 3 (subtreeMaxDepth=2) into group 2 (depth=1) → 1+1+2 = 4 > 3
-    const result = validateReparent(3, 2, byId, childrenByParent)
+    const result = validateReparent(100, targetId, byId, childrenByParent)
     expect(result).not.toBeNull()
     expect(result).toContain('exceed maximum nesting depth')
   })
 
-  it('allows moving leaf group to depth-3 target (max allowed position)', () => {
-    // Target at depth 2, group has subtreeMaxDepth 0 → 2+1+0 = 3 ≤ 3 → valid
-    const groups: GroupRecord[] = [
-      { id: 1, name: 'Root', sortOrder: 0, parentId: null },
-      { id: 2, name: 'L1', sortOrder: 0, parentId: 1 },
-      { id: 3, name: 'L2', sortOrder: 0, parentId: 2 },
-      { id: 4, name: 'Mover', sortOrder: 1, parentId: null },
-    ]
+  it('allows moving leaf group to deepest target (max allowed position)', () => {
+    // Target at depth MAX_DEPTH-1, group has subtreeMaxDepth 0 → (MAX_DEPTH-1)+1+0 = MAX_DEPTH ≤ MAX_DEPTH → valid
+    const groups: GroupRecord[] = []
+    for (let i = 0; i <= MAX_DEPTH - 1; i++) {
+      groups.push({ id: i + 1, name: `L${i}`, sortOrder: 0, parentId: i === 0 ? null : i })
+    }
+    const deepestId = MAX_DEPTH
+    groups.push({ id: 99, name: 'Mover', sortOrder: 1, parentId: null })
     const { byId, childrenByParent } = buildGroupMaps(groups)
-    // Move group 4 (leaf) into group 3 (depth=2) → 2+1+0 = 3 ≤ 3
-    expect(validateReparent(4, 3, byId, childrenByParent)).toBeNull()
+    // Move leaf group 99 into deepest → (MAX_DEPTH-1)+1+0 = MAX_DEPTH ≤ MAX_DEPTH → valid
+    expect(validateReparent(99, deepestId, byId, childrenByParent)).toBeNull()
   })
 })

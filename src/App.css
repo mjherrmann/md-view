@@ -1072,3 +1072,53 @@
     display: none;
   }
 }
+
+
+/* —— Import summary toast —— */
+.import-toast-stack {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.import-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: inherit;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 15%, transparent);
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 300ms ease-out;
+}
+
+.import-toast--fading {
+  opacity: 0;
+}
+
+.import-toast__icon {
+  color: #16a34a;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .import-toast__icon {
+    color: #4ade80;
+  }
+}
+
+.import-toast__message {
+  white-space: nowrap;
+}

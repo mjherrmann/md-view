@@ -4,6 +4,7 @@ import type { GroupRecord } from '../schema'
 import {
   buildGroupMaps,
   computeDepth,
+  MAX_DEPTH,
   validateReparent,
 } from '../groupTree'
 
@@ -11,12 +12,12 @@ import {
  * Property 1: Depth invariant
  *
  * For any sequence of group creation and reparent operations, no group in the
- * resulting tree SHALL have a depth greater than 3.
+ * resulting tree SHALL have a depth greater than MAX_DEPTH.
  *
- * Validates: Requirements 1.4, 3.5
+ * Validates: Requirements 1.1, 1.5
  */
 describe('Feature: nested-groups, Property 1: Depth invariant', () => {
-  /** Generate a valid tree of groups respecting max depth 3. */
+  /** Generate a valid tree of groups respecting depth ≤ MAX_DEPTH. */
   function arbValidTree(maxGroups: number): fc.Arbitrary<GroupRecord[]> {
     return fc
       .integer({ min: 1, max: maxGroups })
@@ -30,7 +31,7 @@ describe('Feature: nested-groups, Property 1: Depth invariant', () => {
         )
       )
       .map((entries) => {
-        // Build groups ensuring depth ≤ 3
+        // Build groups ensuring depth ≤ MAX_DEPTH
         const groups: GroupRecord[] = []
         const depthOf = new Map<number, number>()
 
@@ -42,8 +43,8 @@ describe('Feature: nested-groups, Property 1: Depth invariant', () => {
           if (entry.parentIndex >= 0 && entry.parentIndex < i) {
             const candidateParentId = entry.parentIndex + 1
             const parentDepth = depthOf.get(candidateParentId) ?? 0
-            // Only assign parent if it won't exceed depth 3
-            if (parentDepth + 1 <= 3) {
+            // Only assign parent if it won't exceed MAX_DEPTH
+            if (parentDepth + 1 <= MAX_DEPTH) {
               parentId = candidateParentId
             }
           }
@@ -103,7 +104,7 @@ describe('Feature: nested-groups, Property 1: Depth invariant', () => {
         // Check depth constraint before creating
         if (parentId !== null) {
           const parentDepth = computeDepth(parentId, byId)
-          if (parentDepth + 1 > 3) {
+          if (parentDepth + 1 > MAX_DEPTH) {
             continue // Skip — would exceed max depth
           }
         }
@@ -139,7 +140,7 @@ describe('Feature: nested-groups, Property 1: Depth invariant', () => {
     return groups
   }
 
-  it('no group exceeds depth 3 after arbitrary createChild and reparent sequences', () => {
+  it('no group exceeds MAX_DEPTH after arbitrary createChild and reparent sequences', () => {
     fc.assert(
       fc.property(
         arbValidTree(15),
@@ -154,7 +155,7 @@ describe('Feature: nested-groups, Property 1: Depth invariant', () => {
 
           for (const group of groups) {
             const depth = computeDepth(group.id!, byId)
-            if (depth > 3) {
+            if (depth > MAX_DEPTH) {
               return false
             }
           }

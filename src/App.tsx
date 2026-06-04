@@ -1,8 +1,9 @@
-import matter from 'gray-matter'
+import jsYaml from 'js-yaml'
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { DropZone } from './components/DropZone'
 import { FileLibrary } from './components/FileLibrary'
+import { ImportSummaryToast, type ToastData } from './components/ImportSummaryToast'
 import { MarkdownPane } from './components/MarkdownPane'
 import { ResizeHandle } from './components/resize/ResizeHandle'
 import { useResizable } from './components/resize/useResizable'
@@ -10,16 +11,32 @@ import {
   type FileRecord,
   type VersionRecord,
   createNewFileFromBrowserDrop,
+  db,
   getFileById,
   getVersion,
   listVersionsForFile,
   loadFileCurrent,
   versionOrdinalLabel,
 } from './db/schema'
+import { traverseDirectoryTree, type DirectoryNode } from './lib/directoryTraversal'
+import { importDirectoryTree } from './lib/importOrchestrator'
+
+/** Flatten all files from a DirectoryNode tree (used for in-memory fallback on DB failure). */
+function collectAllTreeFiles(node: DirectoryNode): Array<{ name: string; content: string }> {
+  const files: Array<{ name: string; content: string }> = [...node.files]
+  for (const child of node.children) {
+    files.push(...collectAllTreeFiles(child))
+  }
+  return files
+}
 
 function parseMarkdownFile(raw: string) {
   try {
-    return matter(raw)
+    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+    if (!match) return { data: {}, content: raw }
+    const data = jsYaml.load(match[1]!) ?? {}
+    const content = match[2] ?? ''
+    return { data: typeof data === 'object' ? data : {}, content }
   } catch {
     return { data: {}, content: raw }
   }
@@ -47,6 +64,19 @@ export default function App() {
   const [useDark, setUseDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches
   )
+  const [toasts, setToasts] = useState<ToastData[]>([])
+
+  const addToast = useCallback(
+    (data: Omit<ToastData, 'id'>) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setToasts((prev) => [...prev, { ...data, id }])
+    },
+    []
+  )
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
 
   useEffect(() => {
     const m = window.matchMedia('(prefers-color-scheme: dark)')
@@ -110,6 +140,52 @@ export default function App() {
       setLibKey((k) => k + 1)
     },
     [applyRawDocument]
+  )
+
+  const onDirectoriesDropped = useCallback(
+    async (entries: FileSystemDirectoryEntry[]) => {
+      setPersistError(null)
+      for (const dirEntry of entries) {
+        const dirName = dirEntry.name.trim()
+        if (!dirName) continue
+
+        const { root, capReached } = await traverseDirectoryTree(dirEntry)
+        try {
+          const summary = await importDirectoryTree(root)
+
+          addToast({
+            groupsCreated: summary.groupsCreated,
+            groupsReused: summary.groupsReused,
+            filesImported: summary.filesImported,
+            filesUpdated: summary.filesUpdated,
+            capReached: summary.capReached || capReached,
+          })
+
+          // Render last imported file in pane
+          if (summary.filesImported > 0) {
+            const lastFile = await db.files.orderBy('id').last()
+            if (lastFile) {
+              const ver = await loadFileCurrent(lastFile)
+              if (ver) {
+                applyRawDocument(ver.content, lastFile.name, lastFile.id!, ver.id!, 'v1')
+              }
+            }
+          }
+        } catch (e) {
+          // IndexedDB failure: render last readable file in-memory
+          const allFiles = collectAllTreeFiles(root)
+          if (allFiles.length > 0) {
+            const last = allFiles[allFiles.length - 1]!
+            applyRawDocument(last.content, last.name, null, null, null)
+          }
+          setPersistError(
+            e instanceof Error ? e.message : 'Could not save to browser storage (IndexedDB).'
+          )
+        }
+        bumpLibrary()
+      }
+    },
+    [applyRawDocument, bumpLibrary, addToast]
   )
 
   const onOpenVersion = useCallback(
@@ -261,7 +337,7 @@ export default function App() {
           onVersionDetached={onVersionDetachedFromLibrary}
         />
         <ResizeHandle isDragging={isDragging} isMobile={isMobile} handleProps={handleProps} />
-        <DropZone className="app__main" onFiles={onFilesDropped}>
+        <DropZone className="app__main" onFiles={onFilesDropped} onDirectories={onDirectoriesDropped}>
           {frontMatter && (
             <details className="app__meta">
               <summary>Front matter (YAML)</summary>
@@ -281,6 +357,8 @@ export default function App() {
           </div>
         </DropZone>
       </div>
+
+      <ImportSummaryToast toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
 }

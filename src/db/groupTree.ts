@@ -1,5 +1,8 @@
 import type { GroupRecord } from './schema'
 
+/** System-wide maximum group nesting depth. Root = 0, deepest allowed = MAX_DEPTH - 1. */
+export const MAX_DEPTH = 6
+
 /**
  * Compute depth of a group by traversing its parentId chain.
  * Root groups (parentId === null) have depth 0.
@@ -124,8 +127,8 @@ export function validateReparent(
     targetParentId === null ? -1 : computeDepth(targetParentId, groupsById)
   const subtreeMaxDepth = maxDescendantDepth(groupId, childrenByParent)
 
-  if (targetDepth + 1 + subtreeMaxDepth > 3) {
-    return `Reparenting group ${groupId} would exceed maximum nesting depth (resulting depth: ${targetDepth + 1 + subtreeMaxDepth}, max: 3)`
+  if (targetDepth + 1 + subtreeMaxDepth > MAX_DEPTH) {
+    return `Reparenting group ${groupId} would exceed maximum nesting depth (resulting depth: ${targetDepth + 1 + subtreeMaxDepth}, max: ${MAX_DEPTH})`
   }
 
   return null

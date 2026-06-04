@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import { buildGroupMaps, computeDepth, validateReparent } from './groupTree'
+import { buildGroupMaps, computeDepth, MAX_DEPTH, validateReparent } from './groupTree'
 
 export type GroupPlacement = 'auto' | 'manual'
 
@@ -98,6 +98,135 @@ export class MdDatabase extends Dexie {
 }
 
 export const db = new MdDatabase()
+
+/**
+ * Find an existing child group by exact name match under a given parent, or create one.
+ * - Trims name; rejects empty/whitespace-only (returns null).
+ * - Caps name at 255 characters after trimming.
+ * - Reuses existing child if name matches (case-sensitive, post-trim) under same parentId.
+ * - New groups get sortOrder = max(sibling sortOrders) + 1.
+ * - Returns { id, created: boolean }.
+ */
+export async function findOrCreateChildGroup(
+  dirName: string,
+  parentId: number | null
+): Promise<{ id: number; created: boolean } | null> {
+  const trimmed = dirName.trim()
+  if (!trimmed) {
+    return null
+  }
+  const capped = trimmed.slice(0, 255)
+
+  return await db.transaction('rw', [db.groups], async () => {
+    const existing = await db.groups
+      .filter((g) => g.name === capped && g.parentId === parentId)
+      .first()
+    if (existing?.id != null) {
+      return { id: existing.id, created: false }
+    }
+
+    const siblings = await db.groups
+      .filter((g) => g.parentId === parentId)
+      .toArray()
+    const maxOrder =
+      siblings.length > 0
+        ? Math.max(...siblings.map((g) => g.sortOrder))
+        : -1
+
+    const id = (await db.groups.add({
+      name: capped,
+      sortOrder: maxOrder + 1,
+      parentId,
+    })) as number
+    return { id, created: true }
+  })
+}
+
+/**
+ * Find an existing root-level group by exact name match, or create one.
+ * Thin wrapper delegating to `findOrCreateChildGroup` with parentId = null.
+ */
+export async function findOrCreateDirectoryGroup(
+  dirName: string
+): Promise<number | null> {
+  const result = await findOrCreateChildGroup(dirName, null)
+  return result?.id ?? null
+}
+
+/** Result from createFilesInGroup indicating which files were created vs updated. */
+export interface CreateFilesInGroupResult {
+  files: FileRecord[]
+  createdCount: number
+  updatedCount: number
+}
+
+/**
+ * Import files into a group with version-update-on-re-drop:
+ * - For each file, check if a file record with the same name (case-sensitive)
+ *   already exists in the target group.
+ * - If a same-name file exists: add a new version to that file record with
+ *   source = 'drop', update currentVersionId and updatedAt.
+ * - If no same-name file exists: create a new file record with initial version.
+ * - Returns array of all affected file records (created or updated) plus counts.
+ */
+export async function createFilesInGroup(
+  groupId: number,
+  files: Array<{ name: string; content: string }>
+): Promise<CreateFilesInGroupResult> {
+  return await db.transaction('rw', [db.files, db.versions], async () => {
+    const result: CreateFilesInGroupResult = {
+      files: [],
+      createdCount: 0,
+      updatedCount: 0,
+    }
+
+    for (const { name, content } of files) {
+      const existing = await db.files
+        .filter((f) => f.name === name && f.groupId === groupId)
+        .first()
+
+      if (existing?.id != null) {
+        // Upsert: add new version to existing file
+        const versionId = await db.versions.add({
+          fileId: existing.id,
+          content,
+          createdAt: Date.now(),
+          source: 'drop',
+        })
+        await db.files.update(existing.id, {
+          currentVersionId: versionId as number,
+          updatedAt: Date.now(),
+        })
+        const updated = (await db.files.get(existing.id))!
+        result.files.push(updated)
+        result.updatedCount++
+      } else {
+        // Create new file + initial version
+        const fileId = await db.files.add({
+          name,
+          currentVersionId: 0,
+          updatedAt: Date.now(),
+          groupId,
+          groupPlacement: 'auto',
+        })
+
+        const versionId = await db.versions.add({
+          fileId: fileId as number,
+          content,
+          createdAt: Date.now(),
+          source: 'drop',
+        })
+
+        await db.files.update(fileId, { currentVersionId: versionId as number })
+        const file = (await db.files.get(fileId))!
+        result.files.push(file)
+        result.createdCount++
+      }
+    }
+
+    return result
+  })
+}
 
 async function findOrCreateGroupIdByName(name: string): Promise<number> {
   const trimmed = name.trim()
@@ -368,9 +497,9 @@ export async function createChildGroup(
         )
       }
       const parentDepth = computeDepth(parentId, byId)
-      if (parentDepth >= 3) {
+      if (parentDepth >= MAX_DEPTH - 1) {
         throw new Error(
-          `Cannot create child group under group ${parentId}: parent is at depth ${parentDepth}, child would exceed maximum depth of 3.`
+          `Cannot create child group under group ${parentId}: parent is at depth ${parentDepth}, child would exceed maximum depth of ${MAX_DEPTH}.`
         )
       }
     }
