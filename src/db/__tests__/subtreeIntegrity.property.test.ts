@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import type { GroupRecord } from '../schema'

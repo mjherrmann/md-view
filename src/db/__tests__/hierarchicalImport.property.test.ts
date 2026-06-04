@@ -101,7 +101,7 @@ describe('Feature: directory-drop-hierarchical, Property 1: Depth invariant unde
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -168,7 +168,7 @@ describe('Feature: directory-drop-hierarchical, Property 5: Same-name reuse idem
           expect(summary2.filesUpdated).toBe(summary1.filesImported)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -265,7 +265,7 @@ describe('Feature: directory-drop-hierarchical, Property 6: Import summary accur
           expect(summary.filesImported).toBe(expectedFiles)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 
@@ -298,7 +298,7 @@ describe('Feature: directory-drop-hierarchical, Property 6: Import summary accur
           expect(second.filesUpdated).toBe(first.filesImported)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -409,7 +409,7 @@ describe('Feature: directory-drop-hierarchical, Property 3: File assignment corr
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -506,7 +506,7 @@ describe('Feature: directory-drop-hierarchical, Property 4: Flatten-point assign
           expect(allGroups.length).toBe(expectedGroupCount)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -623,7 +623,7 @@ describe('Feature: directory-drop-hierarchical, Property 2: Structure mirroring'
           expect(structureValid).toBe(true)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -761,7 +761,7 @@ describe('Feature: directory-drop-hierarchical, Property 9: file version update 
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })

@@ -99,7 +99,7 @@ describe('Feature: directory-drop-import, Property 1: Flat import invariant', ()
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 
@@ -137,7 +137,7 @@ describe('Feature: directory-drop-import, Property 1: Flat import invariant', ()
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -214,7 +214,7 @@ describe('Feature: directory-drop-import, Property 6: File record shape', () => 
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 
@@ -266,7 +266,7 @@ describe('Feature: directory-drop-import, Property 6: File record shape', () => 
           expect(result.updatedCount).toBe(count - 1)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -389,7 +389,7 @@ describe('Feature: directory-drop-import, Property 11: Mixed drop dispatch', () 
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })

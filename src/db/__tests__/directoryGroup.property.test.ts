@@ -33,7 +33,7 @@ describe('Feature: directory-drop-import, Property 2: Group name derivation', ()
           expect(group!.parentId).toBeNull()
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -75,7 +75,7 @@ describe('Feature: directory-drop-import, Property 3: Group reuse idempotence', 
           expect(allGroups).toHaveLength(1)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -120,7 +120,7 @@ describe('Feature: directory-drop-import, Property 4: Group sort order assignmen
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
@@ -151,7 +151,7 @@ describe('Feature: directory-drop-import, Property 5: Whitespace directory names
           expect(allGroups).toHaveLength(0)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })

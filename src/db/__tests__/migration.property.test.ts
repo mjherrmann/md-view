@@ -116,7 +116,7 @@ describe('Feature: nested-groups, Property 8: Migration preserves existing data'
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })

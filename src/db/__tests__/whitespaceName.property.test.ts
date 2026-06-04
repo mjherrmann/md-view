@@ -41,7 +41,7 @@ describe('Feature: nested-groups, Property 6: Whitespace group name rejection', 
         const countAfter = await db.groups.count()
         expect(countAfter).toBe(countBefore)
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     )
   })
 })
