@@ -23,6 +23,7 @@ import {
   listGroups,
   listVersionsForFile,
   loadFileCurrent,
+  mergeGroupInto,
   moveFileToGroup,
   renameGroup,
   reorderSiblings,
@@ -494,6 +495,17 @@ export function FileLibrary({
       return
     }
     const sourceParentId = sourceGroup.parentId
+
+    // Same-name collision check → merge instead of reorder/reparent
+    const targetSiblings = maps.get(targetParentId) ?? []
+    const sameNameSibling = targetSiblings.find(
+      (s) => s.name === sourceGroup.name && s.id !== sourceId
+    )
+    if (sameNameSibling) {
+      await mergeGroupInto(sourceId, sameNameSibling.id!)
+      reload()
+      return
+    }
 
     if (sourceParentId === targetParentId) {
       // Same parent → reorder among siblings

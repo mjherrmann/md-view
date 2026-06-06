@@ -342,6 +342,131 @@ export async function moveFileToGroup(
 }
 
 /**
+ * Recursively merge a source group's contents into a target group.
+ * Files are merged by name (versions reassigned) or moved. Child groups with
+ * same-name collisions are recursed; non-colliding children are reparented.
+ * The source group is deleted after merge.
+ *
+ * Uses a single rw transaction — recursive logic is an inner function to
+ * avoid Dexie nested-transaction issues on overlapping table sets.
+ */
+export async function mergeGroupInto(
+  sourceGroupId: number,
+  targetGroupId: number
+): Promise<void> {
+  await db.transaction('rw', [db.groups, db.files, db.versions], async () => {
+    async function mergeRecursive(srcId: number, tgtId: number): Promise<void> {
+      const srcGroup = await db.groups.get(srcId)
+      const tgtGroup = await db.groups.get(tgtId)
+      if (!srcGroup || !tgtGroup) {
+        throw new Error(
+          `Cannot merge: source group ${srcId} or target group ${tgtId} not found.`
+        )
+      }
+
+      // --- Inline moveFileToGroup algorithm for each file in source ---
+      const sourceFiles = await db.files
+        .filter((f) => f.groupId === srcId)
+        .toArray()
+
+      for (const file of sourceFiles) {
+        // Find same-name file in target group
+        const sameNameTarget = await db.files
+          .filter(
+            (f) =>
+              f.id !== file.id &&
+              f.name === file.name &&
+              f.groupId === tgtId
+          )
+          .first()
+
+        if (sameNameTarget?.id != null) {
+          // Merge: reassign all versions from source file to target file
+          const sourceVersions = await db.versions
+            .where('fileId')
+            .equals(file.id!)
+            .toArray()
+          for (const ver of sourceVersions) {
+            await db.versions.update(ver.id!, { fileId: sameNameTarget.id })
+          }
+
+          // Delete source file record
+          await db.files.delete(file.id!)
+
+          // Update target file's currentVersionId to newest version
+          const allTargetVers = await db.versions
+            .where('fileId')
+            .equals(sameNameTarget.id)
+            .toArray()
+          const newest = allTargetVers.sort(
+            (a, b) => a.createdAt - b.createdAt
+          ).at(-1)!
+          await db.files.update(sameNameTarget.id, {
+            currentVersionId: newest.id!,
+            updatedAt: Date.now(),
+          })
+        } else {
+          // No collision: move file to target group
+          await db.files.update(file.id!, {
+            groupId: tgtId,
+            groupPlacement: 'manual',
+            updatedAt: Date.now(),
+          })
+        }
+      }
+
+      // --- Handle child groups ---
+      const childGroups = await db.groups
+        .filter((g) => g.parentId === srcId)
+        .toArray()
+
+      for (const child of childGroups) {
+        // Find same-name sibling under target
+        const sameNameSibling = await db.groups
+          .filter(
+            (g) =>
+              g.parentId === tgtId &&
+              g.name === child.name &&
+              g.id !== child.id
+          )
+          .first()
+
+        if (sameNameSibling?.id != null) {
+          // Collision: recurse
+          await mergeRecursive(child.id!, sameNameSibling.id)
+        } else {
+          // No collision: inline reparent — compute sortOrder and update parentId
+          const targetChildren = await db.groups
+            .filter((g) => g.parentId === tgtId)
+            .toArray()
+          const maxOrder =
+            targetChildren.length > 0
+              ? Math.max(...targetChildren.map((g) => g.sortOrder))
+              : -1
+          await db.groups.update(child.id!, {
+            parentId: tgtId,
+            sortOrder: maxOrder + 1,
+          })
+        }
+      }
+
+      // --- Delete empty source group ---
+      await db.groups.delete(srcId)
+
+      // --- Recompute contiguous sortOrder for target's children ---
+      const finalChildren = await db.groups
+        .filter((g) => g.parentId === tgtId)
+        .sortBy('sortOrder')
+      for (let i = 0; i < finalChildren.length; i++) {
+        await db.groups.update(finalChildren[i]!.id!, { sortOrder: i })
+      }
+    }
+
+    await mergeRecursive(sourceGroupId, targetGroupId)
+  })
+}
+
+/**
  * Move one version out into its own file row at the target group (or ungrouped).
  */
 export async function detachVersionToNewFile(

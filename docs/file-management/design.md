@@ -37,13 +37,19 @@ flowchart TD
     REORD[reorderSiblings]
     CREATE[createChildGroup]
     DELG[deleteGroupWithPromotion]
+    MERGE[mergeGroupInto]
   end
 
   LIB --> |group drop| CLASSIFY{same parentId?}
-  CLASSIFY -->|yes| REORD
-  CLASSIFY -->|no| VALIDATE
+  CLASSIFY -->|yes| COLLCHECK1{same-name sibling?}
+  CLASSIFY -->|no| COLLCHECK2{same-name sibling at target?}
+  COLLCHECK1 -->|yes| MERGE
+  COLLCHECK1 -->|no| REORD
+  COLLCHECK2 -->|yes| MERGE
+  COLLCHECK2 -->|no| VALIDATE
   VALIDATE -->|valid| REPAR
   VALIDATE -->|invalid: cycle/depth| NOOP[no-op]
+  MERGE --> DB
   REPAR --> DB
   REORD --> DB
   CREATE --> DB
@@ -265,6 +271,35 @@ Algorithm:
 
 All steps execute within a single IndexedDB transaction.
 
+### Merge Group Into (Same-Name Collision)
+
+```typescript
+/**
+ * Recursively merge a source group's contents into a target group.
+ * Used when a group is dropped where a same-name sibling already exists.
+ * Single rw transaction on [db.groups, db.files, db.versions].
+ */
+export async function mergeGroupInto(
+  sourceGroupId: number,
+  targetGroupId: number
+): Promise<void>
+```
+
+Algorithm:
+1. Load source and target group records.
+2. For each file in source group:
+   - Find same-name file in target group.
+   - If found: reassign all source versions to target file, delete source file, update target's `currentVersionId` to newest.
+   - If not found: update file's `groupId` to target, set `groupPlacement` to `'manual'`.
+3. For each direct child group of source:
+   - Find same-name child group under target.
+   - If found: recurse (`mergeGroupInto` inner call).
+   - If not found: update child's `parentId` to target, compute `sortOrder`.
+4. Delete the now-empty source group.
+5. Recompute contiguous `sortOrder` for target's children.
+
+All steps execute within a single IndexedDB transaction. The recursive logic uses an inner function to avoid Dexie nested-transaction conflicts on overlapping table sets.
+
 ### Find or Create Child Group
 
 ```typescript
@@ -459,8 +494,11 @@ Detection helpers: `isInternalFileDrag`, `isInternalGroupDrag`, `isInternalVersi
 
 When a group is dropped:
 - Compare the dragged group's current `parentId` with the target section's `parentId`.
-- Same `parentId` → reorder operation (reassign `sortOrder` among siblings).
-- Different `parentId` → reparent operation (validate via `validateReparent`, then execute `reparentGroup`).
+- **Before** branching on same/different parent, check for same-name collision at the target level:
+  - Look up siblings at `targetParentId`.
+  - If a sibling with the same name (case-sensitive) as the source group exists → call `mergeGroupInto(sourceId, sameNameSibling.id)` and return early.
+- Same `parentId`, no collision → reorder operation (reassign `sortOrder` among siblings).
+- Different `parentId`, no collision → reparent operation (validate via `validateReparent`, then execute `reparentGroup`).
 
 ## Key Operations
 
@@ -510,6 +548,8 @@ When a group is dropped:
 | Subtree travels with reparented group | Only moved group's `parentId` changes; descendants stay intact for predictable behavior |
 | Deletion promotes children to parent | No content loss; children and files move up one level rather than being deleted |
 | Ancestor traversal for cycle detection | O(depth) validation; walks parentId chain from target to root to detect cycles |
+| Same-name group merge on drag-drop | Mirrors the merge-on-collision semantics of directory imports (`findOrCreateChildGroup`) and file moves (`moveFileToGroup`); consistent user mental model across all collision scenarios |
+| Single transaction for recursive merge | `mergeGroupInto` uses one `rw` transaction with an inner recursive function to avoid Dexie nested-transaction conflicts while ensuring atomicity |
 | Confirmation dialog for nested group deletion | Groups with children/files show count of affected items before destructive action |
 | Tree-first traversal for directory import | Separate traversal from DB writes; `traverseDirectoryTree` builds in-memory tree, then `importDirectoryTree` walks it — keeps traversal pure/testable and allows file cap enforcement before any DB work |
 | Hierarchical import mirrors folder structure | Dropped directories become nested groups matching their on-disk hierarchy, replacing the earlier flat import |
@@ -528,6 +568,7 @@ When a group is dropped:
 | Empty/whitespace group name | `createGroup`/`createChildGroup` throws; caller catches and no-ops |
 | IndexedDB transaction failure | Error propagates to caller; no partial state written (Dexie rollback) |
 | Concurrent modification | Dexie transaction isolation handles; last writer wins within transaction |
+| Same-name group collision on drag-drop | Detected before reorder/reparent branches; triggers recursive merge (files by name, child groups by name, source deleted) — no user prompt needed, behavior is deterministic |
 | IndexedDB unavailable on drop | Content still renders; non-blocking warning displayed |
 | Directory name empty/whitespace after trim | No groups created, no files imported, no toast |
 | Individual file read failure during import | Skip that file, continue importing remaining files |

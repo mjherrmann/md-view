@@ -30,6 +30,7 @@
 | Subtree | A group together with all its descendant groups and the files contained in each |
 | Library | Sidebar UI listing all persisted files organized by group |
 | Merge | Combining versions from two file records with the same name into one |
+| Group Merge | Recursively merging two groups with the same name: files merged by name (versions combined), child groups recursed or reparented, empty source group deleted |
 | Detach | Splitting a single version out of a file into its own new file record |
 
 ## Requirements
@@ -123,6 +124,13 @@
 7. IF a group is dragged onto itself or any of its transitive descendants, THE system SHALL ignore the drop (no-op, prevents circular reference).
 8. IF reparenting a group would result in any group in its subtree exceeding depth 5, THE system SHALL ignore the drop (no-op).
 9. THE system SHALL treat a drop where source and destination share the same `parentId` as a reorder; a drop where the destination has a different `parentId` as a reparent.
+10. WHEN a group is dragged onto a target level where a sibling group with the same name (case-sensitive, post-trim) already exists under the same `parentId`, THE system SHALL recursively merge the dragged group's contents into the existing same-name group instead of reparenting.
+11. WHEN recursively merging and a child group in the dragged subtree has the same name as a child group in the target group (at the same level), THE system SHALL recurse into those matching child groups and merge their contents rather than reparenting.
+12. WHEN recursively merging and a child group in the dragged subtree has no same-name counterpart in the target group, THE system SHALL reparent that child group into the target group.
+13. WHEN recursively merging and a file in the dragged group has the same name as a file in the target group, THE system SHALL merge all versions from the source file into the target file (append versions, set newest as `currentVersionId`, delete the source file record).
+14. WHEN recursively merging and a file in the dragged group has no same-name counterpart in the target group, THE system SHALL move that file to the target group (update `groupId`).
+15. WHEN the recursive merge completes and the source group is empty (no remaining child groups or files), THE system SHALL delete the now-empty source group.
+16. WHEN a group is dragged to a different parent where a same-name group exists at that level, THE system SHALL apply the same recursive merge logic as for same-parent same-name drops.
 
 ### Requirement 8: File and Version Deletion
 
