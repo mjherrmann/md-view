@@ -39,7 +39,6 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
   const dragStartOffsetRef = useRef(0)
   const targetRef = useRef<Element | null>(null)
   const isDraggingRef = useRef(isDragging)
-  isDraggingRef.current = isDragging
 
   // Stable refs for pointer handlers so the matchMedia effect can remove them
   const handlePointerMoveRef = useRef<(e: PointerEvent) => void>(() => {})
@@ -81,8 +80,14 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
   )
 
   // Keep refs in sync with latest callbacks
-  handlePointerMoveRef.current = handlePointerMove
-  handlePointerEndRef.current = handlePointerEnd
+  useEffect(() => {
+    isDraggingRef.current = isDragging
+  })
+
+  useEffect(() => {
+    handlePointerMoveRef.current = handlePointerMove
+    handlePointerEndRef.current = handlePointerEnd
+  })
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {

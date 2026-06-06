@@ -3,7 +3,6 @@ import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach } from 'vitest'
 import fc from 'fast-check'
 import { db, reparentGroup, mergeGroupInto } from '../schema'
-import type { GroupRecord, FileRecord, VersionRecord } from '../schema'
 import { buildGroupMaps } from '../groupTree'
 
 /**
@@ -236,7 +235,7 @@ describe('Bug Condition: Same-Name Group Drop Causes Reparent Instead of Merge',
         await db.versions.clear()
 
         // Two same-name groups at root
-        const targetGroupId = await createGroup(groupName, null, 0)
+        await createGroup(groupName, null, 0)
         const sourceGroupId = await createGroup(groupName, null, 1)
 
         // Add a file to source so it's not empty

@@ -1,6 +1,10 @@
+---
+inclusion: always
+---
+
 # Prefer package.json Scripts
 
-Run build, test, lint, and other project commands via `package.json` scripts (`npm run <script>`) rather than invoking tools directly with `npx`, `node_modules/.bin/`, or bare CLI commands.
+All build, test, lint, and project commands MUST use `package.json` scripts (`npm run <script>`). Never invoke tools directly via `npx`, `node_modules/.bin/`, or bare CLI.
 
 ## Why
 
@@ -11,6 +15,6 @@ Run build, test, lint, and other project commands via `package.json` scripts (`n
 ## Rules
 
 - Use `npm run build`, `npm run test`, `npm run lint`, etc.
-- if there are new scripts that are needed for development workflow then permission needs to be requested before adding them to package.json scripts
+- Adding new scripts to `package.json` requires explicit user permission first.
 - Never use `npx vitest`, `npx tsc`, `npx eslint`, or similar when an equivalent script exists.
 - For scoped test runs, prefer the script with extra args: `npm run test -- --run src/path/to/file.test.ts`.
